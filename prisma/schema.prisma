@@ -1,0 +1,161 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CLIENT
+  DEVELOPER
+  ADMIN
+}
+
+enum ProjectSystemType {
+  CRM
+  POS
+}
+
+enum ProjectStatus {
+  DRAFT
+  OPEN
+  MATCHED
+  COMPLETED
+  CANCELLED
+}
+
+enum BidStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+enum MilestoneStatus {
+  PENDING
+  IN_PROGRESS
+  SUBMITTED
+  APPROVED
+}
+
+enum LedgerEntryType {
+  HELD
+  COMMISSION
+  PAYOUT
+  REFUND
+}
+
+enum LedgerEntryStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id              String            @id @default(uuid())
+  supabaseId      String            @unique
+  email           String            @unique
+  role            UserRole
+  createdAt       DateTime          @default(now())
+  clientProfile   ClientProfile?
+  developerProfile DeveloperProfile?
+  bids            Bid[]
+  messages        Message[]
+  notifications   Notification[]
+}
+
+model ClientProfile {
+  id           String    @id @default(uuid())
+  userId       String    @unique
+  user         User      @relation(fields: [userId], references: [id])
+  businessName String
+  businessType String?
+  phone        String?
+  projects     Project[]
+}
+
+model DeveloperProfile {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id])
+  displayName  String
+  bio          String?
+  techStack    String[]
+  listingTier  String?  // e.g. 'free', 'promoted' - ties to monthly listing fee model
+  portfolioUrl String?
+}
+
+model Project {
+  id          String            @id @default(uuid())
+  clientId    String
+  client      ClientProfile     @relation(fields: [clientId], references: [id])
+  title       String
+  description String
+  systemType  ProjectSystemType
+  budgetMin   Decimal?
+  budgetMax   Decimal?
+  status      ProjectStatus     @default(DRAFT)
+  createdAt   DateTime          @default(now())
+  bids        Bid[]
+}
+
+model Bid {
+  id              String      @id @default(uuid())
+  projectId       String
+  project         Project     @relation(fields: [projectId], references: [id])
+  developerId     String
+  developer       User        @relation(fields: [developerId], references: [id])
+  proposedAmount  Decimal
+  message         String?
+  status          BidStatus   @default(PENDING)
+  createdAt       DateTime    @default(now())
+  milestones      Milestone[]
+  messages        Message[]
+  ledgerEntries   LedgerEntry[]
+}
+
+model Milestone {
+  id          String          @id @default(uuid())
+  bidId       String
+  bid         Bid             @relation(fields: [bidId], references: [id])
+  title       String
+  description String?
+  amount      Decimal
+  status      MilestoneStatus @default(PENDING)
+  dueDate     DateTime?
+  ledgerEntries LedgerEntry[]
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  bidId     String
+  bid       Bid      @relation(fields: [bidId], references: [id])
+  senderId  String
+  sender    User     @relation(fields: [senderId], references: [id])
+  content   String
+  createdAt DateTime @default(now())
+}
+
+model LedgerEntry {
+  id          String            @id @default(uuid())
+  projectBidId String
+  bid         Bid               @relation(fields: [projectBidId], references: [id])
+  milestoneId String?
+  milestone   Milestone?        @relation(fields: [milestoneId], references: [id])
+  type        LedgerEntryType
+  amount      Decimal
+  status      LedgerEntryStatus @default(PENDING)
+  createdAt   DateTime          @default(now())
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  type      String
+  payload   Json?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
