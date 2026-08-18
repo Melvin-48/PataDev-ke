@@ -22,10 +22,12 @@ API runs at `http://localhost:3000`, Swagger docs at `http://localhost:3000/api/
 ## Module ownership (current split)
 | Module | Owner |
 |---|---|
-| Auth, Users, Payments | Dev A |
-| Projects, Bids, Milestones | Dev B |
+|  Derrick-Auth and user profiles
+|  Lawrence- Payments and messaging
+|  Melvin- projects and matching
+|  Peter- milestones and notifications|
 | CI/CD, environments, deployment, cross-module review | Team lead |
-| Messages, Notifications | Whoever owns the surrounding screen (frontend-paired) |
+| Messages, Notifications - (frontend-paired) |
 | Admin | Shared |
 
 ## Module dependency order
