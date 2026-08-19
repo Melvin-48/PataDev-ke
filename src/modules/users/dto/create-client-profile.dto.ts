@@ -1,12 +1,12 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsOptional } from 'class-validator';
+import { ApiProperty } from "@nestjs/swagger";
+import { IsString, IsOptional } from "class-validator";
 
 export class CreateClientProfileDto {
-  @ApiProperty({ example: 'Jaza Retailers Ltd' })
+  @ApiProperty({ example: "Jaza Retailers Ltd" })
   @IsString()
-  businessName: string;
+  businessName!: string;
 
-  @ApiProperty({ example: 'Retail', required: false })
+  @ApiProperty({ example: "Retail", required: false })
   @IsOptional()
   @IsString()
   businessType?: string;
