@@ -1,12 +1,15 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Injectable } from "@nestjs/common";
+import { BidStatus } from "@prisma/client";
+import { PrismaService } from "../../prisma/prisma.service";
 
 @Injectable()
 export class BidsRepository {
   constructor(private prisma: PrismaService) {}
 
   create(developerId: string, data: any) {
-    return this.prisma.bid.create({ data: { ...data, developerId, status: 'PENDING' } });
+    return this.prisma.bid.create({
+      data: { ...data, developerId, status: "PENDING" },
+    });
   }
 
   findByProject(projectId: string) {
@@ -17,15 +20,14 @@ export class BidsRepository {
     return this.prisma.bid.findUnique({ where: { id } });
   }
 
-  updateStatus(id: string, status: string) {
+  updateStatus(id: string, status: BidStatus) {
     return this.prisma.bid.update({ where: { id }, data: { status } });
   }
 
-  // Rejects every other pending bid on the same project once one is accepted.
   rejectOthers(projectId: string, acceptedBidId: string) {
     return this.prisma.bid.updateMany({
-      where: { projectId, id: { not: acceptedBidId }, status: 'PENDING' },
-      data: { status: 'REJECTED' },
+      where: { projectId, id: { not: acceptedBidId }, status: "PENDING" },
+      data: { status: "REJECTED" },
     });
   }
 }

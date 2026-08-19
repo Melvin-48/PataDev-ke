@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { LedgerEntryStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
@@ -13,7 +14,7 @@ export class PaymentsRepository {
     return this.prisma.ledgerEntry.findMany({ where: { projectBidId: bidId } });
   }
 
-  updateStatus(id: string, status: string) {
+  updateStatus(id: string, status: LedgerEntryStatus) {
     return this.prisma.ledgerEntry.update({ where: { id }, data: { status } });
   }
 }

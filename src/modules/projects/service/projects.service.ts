@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { ProjectsRepository } from '../repository/projects.repository';
 import { CreateProjectDto } from '../dto/create-project.dto';
 import { ProjectFilterDto } from '../dto/project-filter.dto';
@@ -22,6 +22,10 @@ export class ProjectsService {
 
   async updateStatus(id: string, newStatus: string) {
     const project = await this.projectsRepository.findById(id);
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+
     if (!canTransition(project.status, newStatus)) {
       throw new BadRequestException(`Cannot move project from ${project.status} to ${newStatus}`);
     }

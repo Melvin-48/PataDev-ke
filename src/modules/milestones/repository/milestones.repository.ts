@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { MilestoneStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
@@ -13,7 +14,7 @@ export class MilestonesRepository {
     return this.prisma.milestone.findMany({ where: { bidId } });
   }
 
-  updateStatus(id: string, status: string) {
+  updateStatus(id: string, status: MilestoneStatus) {
     return this.prisma.milestone.update({ where: { id }, data: { status } });
   }
 }
