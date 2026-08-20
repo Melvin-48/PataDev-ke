@@ -1,15 +1,38 @@
-import { Injectable } from '@nestjs/common';
+﻿import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 
 @Injectable()
 export class NotificationsRepository {
   constructor(private prisma: PrismaService) {}
 
-  create(userId: string, type: string, payload: any) {
-    return this.prisma.notification.create({ data: { userId, type, payload } });
+  async create(data: any) {
+    return this.prisma.notification.create({ data });
   }
 
-  findForUser(userId: string) {
-    return this.prisma.notification.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
+  async findMany(where: any, orderBy?: any) {
+    return this.prisma.notification.findMany({
+      where,
+      orderBy: orderBy || { createdAt: 'desc' },
+    });
+  }
+
+  async findUnique(where: any) {
+    return this.prisma.notification.findUnique({ where });
+  }
+
+  async update(where: any, data: any) {
+    return this.prisma.notification.update({ where, data });
+  }
+
+  async updateMany(where: any, data: any) {
+    return this.prisma.notification.updateMany({ where, data });
+  }
+
+  async delete(where: any) {
+    return this.prisma.notification.delete({ where });
+  }
+
+  async count(where: any) {
+    return this.prisma.notification.count({ where });
   }
 }

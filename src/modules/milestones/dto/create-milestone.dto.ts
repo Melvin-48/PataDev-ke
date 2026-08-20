@@ -1,12 +1,8 @@
+﻿import { IsString, IsNumber, IsOptional, Min, IsDateString } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNumber, IsOptional, IsDateString } from 'class-validator';
 
 export class CreateMilestoneDto {
-  @ApiProperty()
-  @IsString()
-  bidId: string;
-
-  @ApiProperty()
+  @ApiProperty({ example: 'Frontend Development' })
   @IsString()
   title: string;
 
@@ -15,12 +11,12 @@ export class CreateMilestoneDto {
   @IsString()
   description?: string;
 
-  @ApiProperty()
+  @ApiProperty({ example: 1500 })
   @IsNumber()
+  @Min(0)
   amount: number;
 
-  @ApiProperty({ required: false })
-  @IsOptional()
+  @ApiProperty({ example: '2024-12-31T23:59:59Z' })
   @IsDateString()
-  dueDate?: string;
+  dueDate: string;
 }
