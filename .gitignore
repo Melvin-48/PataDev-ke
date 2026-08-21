@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env
+redis.conf
 *.log
 .DS_Store
 coverage/
