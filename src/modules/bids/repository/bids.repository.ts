@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { BidStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 
@@ -6,12 +6,10 @@ import { PrismaService } from '../../../prisma/prisma.service';
 export class BidsRepository {
   constructor(private prisma: PrismaService) {}
 
-  // Status always starts PENDING here; it only changes via accept/decline flows.
   create(developerId: string, data: any) {
     return this.prisma.bid.create({ data: { ...data, developerId, status: 'PENDING' } });
   }
 
-  // Developer details are included so the client can see who is bidding.
   findByProject(projectId: string) {
     return this.prisma.bid.findMany({
       where: { projectId },
@@ -19,8 +17,16 @@ export class BidsRepository {
     });
   }
 
-  // project + client + developer are pulled in for the bidding rules:
-  // can the developer bid at all, is it their own project, is a bid pending.
+  // Developer's own bid list - project included so they can see what each
+  // bid was for and its current status without a second round-trip.
+  findByDeveloper(developerId: string) {
+    return this.prisma.bid.findMany({
+      where: { developerId },
+      include: { project: true },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
   findById(id: string) {
     return this.prisma.bid.findUnique({
       where: { id },
@@ -28,8 +34,6 @@ export class BidsRepository {
     });
   }
 
-  // The project a developer wants to bid on - client included so the service
-  // can reject bids on your own project.
   findProjectById(projectId: string) {
     return this.prisma.project.findUnique({
       where: { id: projectId },
@@ -37,7 +41,6 @@ export class BidsRepository {
     });
   }
 
-  // Guards the one-bid-per-developer-per-project rule.
   findPendingByDeveloper(projectId: string, developerId: string) {
     return this.prisma.bid.findFirst({
       where: { projectId, developerId, status: 'PENDING' },
@@ -48,26 +51,38 @@ export class BidsRepository {
     return this.prisma.bid.update({ where: { id }, data: { status: status as BidStatus } });
   }
 
-  // The whole accept flow runs in one transaction so a crash can't leave the
-  // project MATCHED with a pending bid, or a bid accepted on an open project:
-  //   1. every other PENDING bid on the project -> REJECTED
-  //   2. this bid -> ACCEPTED
-  //   3. parent project -> MATCHED (visible to developers no more)
-  acceptAndMatch(bidId: string, projectId: string) {
+  // Race-safe by construction: each step's WHERE clause re-checks the state
+  // it depends on, not just the id. If a concurrent request already changed
+  // the bid or project, count === 0 and we throw - the whole transaction
+  // rolls back, including anything this call already wrote.
+  async acceptAndMatch(bidId: string, projectId: string) {
     return this.prisma.$transaction(async (tx) => {
+      const claimedBid = await tx.bid.updateMany({
+        where: { id: bidId, status: 'PENDING' },
+        data: { status: 'ACCEPTED' },
+      });
+      if (claimedBid.count === 0) {
+        throw new ConflictException(
+          'This bid is no longer pending - it may already have been accepted or declined',
+        );
+      }
+
+      const claimedProject = await tx.project.updateMany({
+        where: { id: projectId, status: 'OPEN' },
+        data: { status: 'MATCHED' },
+      });
+      if (claimedProject.count === 0) {
+        throw new ConflictException(
+          'This project is no longer open - another bid may already have been accepted',
+        );
+      }
+
       await tx.bid.updateMany({
         where: { projectId, id: { not: bidId }, status: 'PENDING' },
         data: { status: 'REJECTED' },
       });
-      const accepted = await tx.bid.update({
-        where: { id: bidId },
-        data: { status: 'ACCEPTED' },
-      });
-      await tx.project.update({
-        where: { id: projectId },
-        data: { status: 'MATCHED' },
-      });
-      return accepted;
+
+      return tx.bid.findUnique({ where: { id: bidId } });
     });
   }
 }

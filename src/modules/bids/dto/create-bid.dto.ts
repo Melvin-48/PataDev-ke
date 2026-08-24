@@ -1,17 +1,28 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNumber, IsOptional } from 'class-validator';
+import {
+  IsString,
+  IsNumber,
+  IsOptional,
+  IsUUID,
+  IsPositive,
+  MaxLength,
+} from 'class-validator';
 
 export class CreateBidDto {
-  @ApiProperty()
-  @IsString()
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
   projectId: string;
 
-  @ApiProperty()
+  // Positive-only: zero and negative amounts would poison the ledger once
+  // payments start flowing off accepted bids.
+  @ApiProperty({ example: 45000 })
   @IsNumber()
+  @IsPositive()
   proposedAmount: number;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, maxLength: 2000 })
   @IsOptional()
   @IsString()
+  @MaxLength(2000)
   message?: string;
 }
