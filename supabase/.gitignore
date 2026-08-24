@@ -6,3 +6,6 @@
 .env.keys
 .env.local
 .env.*.local
+
+# Local seed scripts — contain test credentials, never committed
+seed-*.sql
