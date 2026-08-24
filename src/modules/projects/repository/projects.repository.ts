@@ -32,8 +32,15 @@ export class ProjectsRepository {
     return this.prisma.project.count({ where: this.buildWhere(filter) });
   }
 
+  // Deliberately does NOT include bids: this feeds the public detail view, and
+  // exposing every developer's proposedAmount to any caller would leak
+  // competitors' pricing. Bid lists are served by the owner-guarded
+  // GET /bids/project/:projectId route instead.
   findById(id: string) {
-    return this.prisma.project.findUnique({ where: { id }, include: { bids: true } });
+    return this.prisma.project.findUnique({
+      where: { id },
+      include: { client: true },
+    });
   }
 
   update(id: string, data: any) {

@@ -6,11 +6,6 @@ import { CreateBidDto } from '../dto/create-bid.dto';
 export class BidsService {
   constructor(private bidsRepository: BidsRepository) {}
 
-  // Bidding rules enforced here, in one place:
-  //   - the project must exist and still be OPEN (no bidding on drafts or
-  //     projects that are already matched/cancelled)
-  //   - a developer can't bid on their own project
-  //   - one PENDING bid per developer per project
   async create(developerId: string, dto: CreateBidDto) {
     const project = await this.bidsRepository.findProjectById(dto.projectId);
     if (!project) {
@@ -32,12 +27,20 @@ export class BidsService {
     return this.bidsRepository.create(developerId, dto);
   }
 
-  listForProject(projectId: string) {
+  // Authorization is handled by ProjectOwnerGuard on the route; this only
+  // guarantees an unknown project id reads as 404 instead of an empty list.
+  async listForProject(projectId: string) {
+    const project = await this.bidsRepository.findProjectById(projectId);
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
     return this.bidsRepository.findByProject(projectId);
   }
 
-  // Accepting closes the bidding round: this bid becomes ACCEPTED, every other
-  // pending bid is rejected, and the project moves to MATCHED - atomically.
+  listMine(developerId: string) {
+    return this.bidsRepository.findByDeveloper(developerId);
+  }
+
   async accept(bidId: string) {
     const bid = await this.bidsRepository.findById(bidId);
     if (!bid) {
@@ -52,9 +55,6 @@ export class BidsService {
     return this.bidsRepository.acceptAndMatch(bidId, bid.projectId);
   }
 
-  // Declining is the polite rejection: the bid is closed (REJECTED) so it can
-  // never be accepted later, and its message thread stays closed - the
-  // BidAcceptedGuard only lets ACCEPTED bids message.
   async decline(bidId: string) {
     const bid = await this.bidsRepository.findById(bidId);
     if (!bid) {

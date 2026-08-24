@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
@@ -7,6 +7,7 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { BidsService } from '../service/bids.service';
 import { CreateBidDto } from '../dto/create-bid.dto';
 import { BidProjectClientGuard } from '../guards/bid-project-client.guard';
+import { ProjectOwnerGuard } from '../../../common/guards/project-owner.guard';
 
 @ApiTags('bids')
 @ApiBearerAuth()
@@ -15,34 +16,42 @@ import { BidProjectClientGuard } from '../guards/bid-project-client.guard';
 export class BidsController {
   constructor(private readonly bidsService: BidsService) {}
 
-  // Only developers bid; the service enforces project-OPEN, not-own-project
-  // and one-pending-bid-per-developer rules.
   @Post()
   @Roles('DEVELOPER')
   create(@CurrentUser() user, @Body() dto: CreateBidDto) {
     return this.bidsService.create(user.id, dto);
   }
 
+  // Developer's own bid list, across all projects. Registered before any
+  // future GET /bids/:id route - NestJS/Express match routes in registration
+  // order, so a literal path like "mine" must come before a param route like
+  // ":id" or requests to /bids/mine would be swallowed as id="mine" instead.
+  @Get('mine')
+  @Roles('DEVELOPER')
+  listMine(@CurrentUser() user) {
+    return this.bidsService.listMine(user.id);
+  }
+
+  // Client-only: viewing the full bid list on a project is restricted to the
+  // client who owns it, so competing developers can't see each other's bids.
   @Get('project/:projectId')
-  listForProject(@Param('projectId') projectId: string) {
+  @UseGuards(ProjectOwnerGuard)
+  @Roles('CLIENT')
+  listForProject(@Param('projectId', ParseUUIDPipe) projectId: string) {
     return this.bidsService.listForProject(projectId);
   }
 
-  // Accepting one bid closes the round: bid -> ACCEPTED, others -> REJECTED,
-  // project -> MATCHED. Guarded by project ownership, not just the CLIENT role.
   @Post(':id/accept')
   @UseGuards(BidProjectClientGuard)
   @Roles('CLIENT')
-  accept(@Param('id') id: string) {
+  accept(@Param('id', ParseUUIDPipe) id: string) {
     return this.bidsService.accept(id);
   }
 
-  // Decline is the client's explicit rejection of a single bid. The bid's
-  // message thread stays closed (only ACCEPTED bids can message).
   @Post(':id/decline')
   @UseGuards(BidProjectClientGuard)
   @Roles('CLIENT')
-  decline(@Param('id') id: string) {
+  decline(@Param('id', ParseUUIDPipe) id: string) {
     return this.bidsService.decline(id);
   }
 }
