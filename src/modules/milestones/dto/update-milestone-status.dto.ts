@@ -1,8 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsEnum } from 'class-validator';
+import { MilestoneStatus } from '@prisma/client';
 
 export class UpdateMilestoneStatusDto {
-  @ApiProperty({ enum: ['PENDING', 'IN_PROGRESS', 'SUBMITTED', 'APPROVED'] })
-  @IsEnum(['PENDING', 'IN_PROGRESS', 'SUBMITTED', 'APPROVED'])
-  status: string;
+  @ApiProperty({ enum: MilestoneStatus })
+  @IsEnum(MilestoneStatus)
+  status: MilestoneStatus;
 }

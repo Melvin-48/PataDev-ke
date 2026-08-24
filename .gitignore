@@ -1,6 +1,11 @@
 node_modules/
 dist/
 .env
+redis.conf
 *.log
 .DS_Store
 coverage/
+
+# Postman — local dev tooling, not tracked in source control
+*.postman_collection.json
+*.postman_environment.json

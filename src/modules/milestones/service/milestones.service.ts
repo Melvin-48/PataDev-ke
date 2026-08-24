@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import { MilestoneStatus } from '@prisma/client';
 import { MilestonesRepository } from '../repository/milestones.repository';
 import { CreateMilestoneDto } from '../dto/create-milestone.dto';
 import { canTransition } from '../helpers/milestone-status.helper';
@@ -15,7 +16,11 @@ export class MilestonesService {
     return this.milestonesRepository.findByBid(bidId);
   }
 
-  async updateStatus(id: string, newStatus: string, currentStatus: string) {
+  async updateStatus(
+    id: string,
+    newStatus: MilestoneStatus,
+    currentStatus: MilestoneStatus,
+  ) {
     if (!canTransition(currentStatus, newStatus)) {
       throw new BadRequestException(`Cannot move milestone from ${currentStatus} to ${newStatus}`);
     }

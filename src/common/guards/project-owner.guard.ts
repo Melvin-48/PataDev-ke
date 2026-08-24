@@ -5,7 +5,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { PrismaService } from '../../modules/prisma/prisma.service';
 
 // Confirms the authenticated user is the CLIENT who owns the project being
 // acted on. Shared across modules because the same check is needed with

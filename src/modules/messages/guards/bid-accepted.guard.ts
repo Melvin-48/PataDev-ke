@@ -1,5 +1,5 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 // Team decision: messaging only opens once the linked Bid has been accepted
 // by the client - not when the project is created, not while a bid is pending.

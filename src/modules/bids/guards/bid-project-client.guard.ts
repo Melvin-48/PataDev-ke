@@ -1,5 +1,5 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 // Only the client who owns the bid's project can accept or decline that bid.
 // Roles('CLIENT') alone is not enough - any client could otherwise act on any

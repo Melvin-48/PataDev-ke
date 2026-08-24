@@ -1,13 +1,15 @@
 import { ConflictException, Injectable } from '@nestjs/common';
 import { BidStatus } from '@prisma/client';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class BidsRepository {
   constructor(private prisma: PrismaService) {}
 
   create(developerId: string, data: any) {
-    return this.prisma.bid.create({ data: { ...data, developerId, status: 'PENDING' } });
+    return this.prisma.bid.create({
+      data: { ...data, developerId, status: "PENDING" },
+    });
   }
 
   findByProject(projectId: string) {
@@ -47,8 +49,8 @@ export class BidsRepository {
     });
   }
 
-  updateStatus(id: string, status: string) {
-    return this.prisma.bid.update({ where: { id }, data: { status: status as BidStatus } });
+  updateStatus(id: string, status: BidStatus) {
+    return this.prisma.bid.update({ where: { id }, data: { status } });
   }
 
   // Race-safe by construction: each step's WHERE clause re-checks the state

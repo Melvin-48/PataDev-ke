@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, ProjectStatus } from '@prisma/client';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { ProjectFilterDto } from '../dto/project-filter.dto';
 
 @Injectable()

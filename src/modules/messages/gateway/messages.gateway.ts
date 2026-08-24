@@ -11,7 +11,7 @@ import { Server, Socket } from 'socket.io';
 import { Injectable, Logger } from '@nestjs/common';
 import * as jwt from 'jsonwebtoken';
 import { JwksClient } from 'jwks-rsa';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { MessagesService } from '../service/messages.service';
 
 const jwks = new JwksClient({
