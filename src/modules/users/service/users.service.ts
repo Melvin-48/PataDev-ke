@@ -27,6 +27,13 @@ export class UsersService {
     const existing = await this.usersRepository.findBySupabaseId(dto.supabaseId);
     if (existing) return existing;
 
+    const existingByEmail = await this.usersRepository.findByEmail(dto.email);
+    if (existingByEmail) {
+      const updated = await this.usersRepository.updateSupabaseId(existingByEmail.id, dto.supabaseId);
+      await this.redis.setJson(cacheKey(dto.supabaseId), updated, CACHE_TTL_SECONDS);
+      return updated;
+    }
+
     const user = await this.usersRepository.create({
       supabaseId: dto.supabaseId,
       email: dto.email,

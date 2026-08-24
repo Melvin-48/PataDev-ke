@@ -54,6 +54,8 @@ const createdDeveloperProfile = {
 
 const mockRepo = {
   findBySupabaseId: jest.fn(),
+  findByEmail: jest.fn(),
+  updateSupabaseId: jest.fn(),
   findById: jest.fn(),
   create: jest.fn(),
   createClientProfile: jest.fn(),
@@ -126,6 +128,27 @@ describe('UsersService', () => {
         role: UserRole.CLIENT,
       });
       expect(result).toBe(baseUser);
+    });
+
+    it('updates an existing user if they are found by email instead of supabaseId', async () => {
+      (mockRepo.findBySupabaseId as jest.Mock).mockResolvedValue(null);
+      (mockRepo.findByEmail as jest.Mock).mockResolvedValue(baseUser);
+      (mockRepo.updateSupabaseId as jest.Mock).mockResolvedValue({
+        ...baseUser,
+        supabaseId: 'new-supabase-id',
+      });
+
+      const service = buildService();
+      const result = await service.syncFromSupabase({
+        supabaseId: 'new-supabase-id',
+        email: baseUser.email,
+        role: UserRole.CLIENT,
+      });
+
+      expect(mockRepo.findByEmail).toHaveBeenCalledWith(baseUser.email);
+      expect(mockRepo.updateSupabaseId).toHaveBeenCalledWith(baseUser.id, 'new-supabase-id');
+      expect(mockRepo.create).not.toHaveBeenCalled();
+      expect(result.supabaseId).toBe('new-supabase-id');
     });
 
     it('populates the Redis cache after creating a new user with the correct key and TTL', async () => {

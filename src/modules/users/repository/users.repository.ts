@@ -20,6 +20,21 @@ export class UsersRepository {
     });
   }
 
+  findByEmail(email: string) {
+    return this.prisma.user.findUnique({
+      where: { email },
+      include: { clientProfile: true, developerProfile: true },
+    });
+  }
+
+  updateSupabaseId(id: string, supabaseId: string) {
+    return this.prisma.user.update({
+      where: { id },
+      data: { supabaseId },
+      include: { clientProfile: true, developerProfile: true },
+    });
+  }
+
   create(
     data: Prisma.UserCreateInput,
   ): Promise<User & { clientProfile: ClientProfile | null; developerProfile: DeveloperProfile | null }> {
