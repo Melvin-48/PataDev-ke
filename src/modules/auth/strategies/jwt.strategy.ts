@@ -1,12 +1,16 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PassportStrategy } from "@nestjs/passport";
 import { ExtractJwt, Strategy } from "passport-jwt";
 import { passportJwtSecret } from "jwks-rsa";
+import { UsersService } from "../../users/service/users.service";
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(configService: ConfigService) {
+  constructor(
+    configService: ConfigService,
+    private readonly usersService: UsersService,
+  ) {
     const supabaseUrl = configService
       .getOrThrow<string>("SUPABASE_URL")
       .replace(/\/$/, "");
@@ -26,6 +30,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
-    return { id: payload.sub, email: payload.email, role: payload.role };
+    const user = await this.usersService.findBySupabaseId(payload.sub);
+    if (!user) {
+      throw new UnauthorizedException(
+        "User account not found. Please complete registration.",
+      );
+    }
+
+    return {
+      sub: payload.sub,
+      email: payload.email,
+      localUserId: user.id,
+      role: user.role,
+    };
   }
 }

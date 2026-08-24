@@ -41,4 +41,25 @@ export class UsersRepository {
       data: { ...data, user: { connect: { id: userId } } },
     });
   }
+
+  updateClientProfile(
+    userId: string,
+    data: Prisma.ClientProfileUpdateWithoutUserInput,
+  ) {
+    return this.prisma.clientProfile.update({
+      where: { userId },
+      data,
+    });
+  }
+
+  updateDeveloperProfile(
+    userId: string,
+    data: Prisma.DeveloperProfileUpdateWithoutUserInput,
+  ) {
+    return this.prisma.developerProfile.update({
+      where: { userId },
+      data,
+    });
+  }
 }
+

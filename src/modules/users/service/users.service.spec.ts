@@ -37,12 +37,29 @@ const createdProfile = {
 // Mocks
 // ---------------------------------------------------------------------------
 
+const developerProfileDto = {
+  displayName: 'Jane Dev',
+  techStack: ['React', 'NestJS'],
+};
+
+const createdDeveloperProfile = {
+  id: 'dev-profile-uuid-001',
+  userId: USER_ID,
+  displayName: 'Jane Dev',
+  bio: null,
+  techStack: ['React', 'NestJS'],
+  portfolioUrl: null,
+  listingTier: null,
+};
+
 const mockRepo = {
   findBySupabaseId: jest.fn(),
   findById: jest.fn(),
   create: jest.fn(),
   createClientProfile: jest.fn(),
   createDeveloperProfile: jest.fn(),
+  updateClientProfile: jest.fn(),
+  updateDeveloperProfile: jest.fn(),
 } as unknown as UsersRepository;
 
 const mockRedis = {
@@ -300,4 +317,184 @@ describe('UsersService', () => {
       ).rejects.toThrow(NotFoundException);
     });
   });
+
+  // =========================================================================
+  // createDeveloperProfile — business rules
+  // =========================================================================
+
+  describe('createDeveloperProfile', () => {
+    it('throws ConflictException when the user is a CLIENT (role protection)', async () => {
+      const clientUser = { ...baseUser, role: UserRole.CLIENT };
+      (mockRepo.findById as jest.Mock).mockResolvedValue(clientUser);
+
+      const service = buildService();
+
+      await expect(
+        service.createDeveloperProfile(USER_ID, developerProfileDto),
+      ).rejects.toThrow(ConflictException);
+
+      await expect(
+        service.createDeveloperProfile(USER_ID, developerProfileDto),
+      ).rejects.toThrow('User is not a DEVELOPER');
+    });
+
+    it('does not call createDeveloperProfile or invalidate cache when role check fails', async () => {
+      const clientUser = { ...baseUser, role: UserRole.CLIENT };
+      (mockRepo.findById as jest.Mock).mockResolvedValue(clientUser);
+
+      const service = buildService();
+      await service.createDeveloperProfile(USER_ID, developerProfileDto).catch(() => {});
+
+      expect(mockRepo.createDeveloperProfile).not.toHaveBeenCalled();
+      expect(mockRedis.invalidate).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictException when a DEVELOPER already has a profile (duplicate protection)', async () => {
+      const devWithProfile = {
+        ...baseUser,
+        role: UserRole.DEVELOPER,
+        developerProfile: { id: 'existing-dev-profile', userId: USER_ID, displayName: 'Old' },
+      };
+      (mockRepo.findById as jest.Mock).mockResolvedValue(devWithProfile);
+
+      const service = buildService();
+
+      await expect(
+        service.createDeveloperProfile(USER_ID, developerProfileDto),
+      ).rejects.toThrow(ConflictException);
+
+      await expect(
+        service.createDeveloperProfile(USER_ID, developerProfileDto),
+      ).rejects.toThrow('Developer profile already exists');
+    });
+
+    it('does not call createDeveloperProfile or invalidate cache when profile already exists', async () => {
+      const devWithProfile = {
+        ...baseUser,
+        role: UserRole.DEVELOPER,
+        developerProfile: { id: 'existing-dev-profile', userId: USER_ID, displayName: 'Old' },
+      };
+      (mockRepo.findById as jest.Mock).mockResolvedValue(devWithProfile);
+
+      const service = buildService();
+      await service.createDeveloperProfile(USER_ID, developerProfileDto).catch(() => {});
+
+      expect(mockRepo.createDeveloperProfile).not.toHaveBeenCalled();
+      expect(mockRedis.invalidate).not.toHaveBeenCalled();
+    });
+
+    it('creates the developer profile and invalidates cache on the happy path', async () => {
+      const devUser = { ...baseUser, role: UserRole.DEVELOPER, developerProfile: null };
+      (mockRepo.findById as jest.Mock).mockResolvedValue(devUser);
+      (mockRepo.createDeveloperProfile as jest.Mock).mockResolvedValue(createdDeveloperProfile);
+
+      const service = buildService();
+      const result = await service.createDeveloperProfile(USER_ID, developerProfileDto);
+
+      expect(mockRepo.createDeveloperProfile).toHaveBeenCalledWith(USER_ID, developerProfileDto);
+      expect(mockRedis.invalidate).toHaveBeenCalledWith(CACHE_KEY);
+      expect(result).toBe(createdDeveloperProfile);
+    });
+  });
+
+  // =========================================================================
+  // updateClientProfile — business rules
+  // =========================================================================
+
+  describe('updateClientProfile', () => {
+    it('throws NotFoundException when the client profile does not exist', async () => {
+      const clientUserNoProfile = { ...baseUser, role: UserRole.CLIENT, clientProfile: null };
+      (mockRepo.findById as jest.Mock).mockResolvedValue(clientUserNoProfile);
+
+      const service = buildService();
+
+      await expect(
+        service.updateClientProfile(USER_ID, { businessName: 'New Name' }),
+      ).rejects.toThrow(NotFoundException);
+
+      await expect(
+        service.updateClientProfile(USER_ID, { businessName: 'New Name' }),
+      ).rejects.toThrow('Client profile not found. Create a profile first.');
+    });
+
+    it('does not call updateClientProfile or invalidate cache when profile does not exist', async () => {
+      const clientUserNoProfile = { ...baseUser, role: UserRole.CLIENT, clientProfile: null };
+      (mockRepo.findById as jest.Mock).mockResolvedValue(clientUserNoProfile);
+
+      const service = buildService();
+      await service.updateClientProfile(USER_ID, { businessName: 'New Name' }).catch(() => {});
+
+      expect(mockRepo.updateClientProfile).not.toHaveBeenCalled();
+      expect(mockRedis.invalidate).not.toHaveBeenCalled();
+    });
+
+    it('updates the client profile and invalidates cache on the happy path', async () => {
+      const userWithProfile = {
+        ...baseUser,
+        role: UserRole.CLIENT,
+        clientProfile: { id: 'profile-uuid-001', userId: USER_ID, businessName: 'Old Co' },
+      };
+      const updatedProfile = { ...createdProfile, businessName: 'New Co' };
+      (mockRepo.findById as jest.Mock).mockResolvedValue(userWithProfile);
+      (mockRepo.updateClientProfile as jest.Mock).mockResolvedValue(updatedProfile);
+
+      const service = buildService();
+      const result = await service.updateClientProfile(USER_ID, { businessName: 'New Co' });
+
+      expect(mockRepo.updateClientProfile).toHaveBeenCalledWith(USER_ID, { businessName: 'New Co' });
+      expect(mockRedis.invalidate).toHaveBeenCalledWith(CACHE_KEY);
+      expect(result).toBe(updatedProfile);
+    });
+  });
+
+  // =========================================================================
+  // updateDeveloperProfile — business rules
+  // =========================================================================
+
+  describe('updateDeveloperProfile', () => {
+    it('throws NotFoundException when the developer profile does not exist', async () => {
+      const devUserNoProfile = { ...baseUser, role: UserRole.DEVELOPER, developerProfile: null };
+      (mockRepo.findById as jest.Mock).mockResolvedValue(devUserNoProfile);
+
+      const service = buildService();
+
+      await expect(
+        service.updateDeveloperProfile(USER_ID, { displayName: 'New Name' }),
+      ).rejects.toThrow(NotFoundException);
+
+      await expect(
+        service.updateDeveloperProfile(USER_ID, { displayName: 'New Name' }),
+      ).rejects.toThrow('Developer profile not found. Create a profile first.');
+    });
+
+    it('does not call updateDeveloperProfile or invalidate cache when profile does not exist', async () => {
+      const devUserNoProfile = { ...baseUser, role: UserRole.DEVELOPER, developerProfile: null };
+      (mockRepo.findById as jest.Mock).mockResolvedValue(devUserNoProfile);
+
+      const service = buildService();
+      await service.updateDeveloperProfile(USER_ID, { displayName: 'New Name' }).catch(() => {});
+
+      expect(mockRepo.updateDeveloperProfile).not.toHaveBeenCalled();
+      expect(mockRedis.invalidate).not.toHaveBeenCalled();
+    });
+
+    it('updates the developer profile and invalidates cache on the happy path', async () => {
+      const devWithProfile = {
+        ...baseUser,
+        role: UserRole.DEVELOPER,
+        developerProfile: { id: 'dev-profile-uuid-001', userId: USER_ID, displayName: 'Old' },
+      };
+      const updatedProfile = { ...createdDeveloperProfile, displayName: 'New Name' };
+      (mockRepo.findById as jest.Mock).mockResolvedValue(devWithProfile);
+      (mockRepo.updateDeveloperProfile as jest.Mock).mockResolvedValue(updatedProfile);
+
+      const service = buildService();
+      const result = await service.updateDeveloperProfile(USER_ID, { displayName: 'New Name' });
+
+      expect(mockRepo.updateDeveloperProfile).toHaveBeenCalledWith(USER_ID, { displayName: 'New Name' });
+      expect(mockRedis.invalidate).toHaveBeenCalledWith(CACHE_KEY);
+      expect(result).toBe(updatedProfile);
+    });
+  });
 });
+
