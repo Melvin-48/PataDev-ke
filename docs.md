@@ -293,6 +293,53 @@ Provides direct client-developer communication once matched.
 *   **Parameters**: `bidId` (Bid UUID)
 *   **Response**: Array of chronological messages in the thread.
 
+#### WebSockets Realtime Chat API
+The chat also supports bi-directional, realtime updates via Socket.io.
+
+*   **Endpoint**: `ws://localhost:3000` (or `wss://` in production)
+*   **Gateway Controller**: [MessagesGateway](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/messages/gateway/messages.gateway.ts)
+*   **Authentication**: Connection is authenticated during the handshake. The client must pass the Supabase JWT token either in:
+    1.  `handshake.auth.token` (e.g. `token: "Bearer <JWT>"` or `token: "<JWT>"`)
+    2.  `handshake.query.token` (e.g. `ws://localhost:3000?token=<JWT>`)
+    *If token verification fails, the connection is instantly disconnected.*
+
+##### WebSocket Client Actions (Emit)
+1.  **Join Room (`joinRoom`)**:
+    Must be sent immediately after connecting to receive messages in a specific engagement room.
+    *   **Payload**:
+        ```json
+        {
+          "bidId": "accepted-bid-uuid"
+        }
+        ```
+    *   **Response Events**: Emits `joinedRoom` with payload `{ "bidId": "..." }` on success, or `error` if unauthorized.
+2.  **Send Message (`sendMessage`)**:
+    Sends and persists a new message.
+    *   **Payload**:
+        ```json
+        {
+          "bidId": "accepted-bid-uuid",
+          "content": "Hi, this is a realtime message!"
+        }
+        ```
+
+##### WebSocket Server Events (Listen)
+1.  **Receive Message (`message`)**:
+    Triggered when any participant in the room sends a message.
+    *   **Broadcast Payload**:
+        ```json
+        {
+          "id": "message-uuid",
+          "bidId": "accepted-bid-uuid",
+          "senderId": "user-uuid",
+          "content": "Hi, this is a realtime message!",
+          "createdAt": "2026-08-24T12:00:00.000Z"
+        }
+        ```
+2.  **Error Handler (`error`)**:
+    Triggered on authentication/authorization validation failures.
+    *   **Payload**: String error message.
+
 ---
 
 ### 4.7 Milestones Module
