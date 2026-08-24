@@ -12,12 +12,10 @@ export class UsersService {
   }
 
   createClientProfile(userId: string, dto: CreateClientProfileDto) {
-    // TODO: create ClientProfile row via Prisma
-    throw new Error('Not implemented');
+    return this.usersRepository.createClientProfile(userId, dto);
   }
 
   createDeveloperProfile(userId: string, dto: CreateDeveloperProfileDto) {
-    // TODO: create DeveloperProfile row via Prisma
-    throw new Error('Not implemented');
+    return this.usersRepository.createDeveloperProfile(userId, dto);
   }
 }
