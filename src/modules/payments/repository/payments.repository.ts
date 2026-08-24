@@ -14,7 +14,7 @@ export class PaymentsRepository {
     return this.prisma.ledgerEntry.findMany({ where: { projectBidId: bidId } });
   }
 
-  updateStatus(id: string, status: LedgerEntryStatus) {
-    return this.prisma.ledgerEntry.update({ where: { id }, data: { status } });
+  updateStatus(id: string, status: string) {
+    return this.prisma.ledgerEntry.update({ where: { id }, data: { status: status as LedgerEntryStatus } });
   }
 }

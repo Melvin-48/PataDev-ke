@@ -1,7 +1,5 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-
-// Only the matched client + developer pair (via the milestone's Bid) may view/update it.
 @Injectable()
 export class MilestoneAccessGuard implements CanActivate {
   constructor(private prisma: PrismaService) {}

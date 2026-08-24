@@ -14,45 +14,50 @@
     "prisma:migrate": "prisma migrate dev"
   },
   "dependencies": {
-    "@nestjs/common": "^10.0.0",
-    "@nestjs/config": "^3.0.0",
-    "@nestjs/core": "^10.0.0",
-    "@nestjs/jwt": "^10.2.0",
-    "@nestjs/passport": "^10.0.3",
-    "@nestjs/platform-express": "^10.0.0",
-    "@nestjs/swagger": "^7.0.0",
+    "@nestjs/common": "^11.0.1",
+    "@nestjs/config": "^4.0.0",
+    "@nestjs/core": "^11.0.1",
+    "@nestjs/jwt": "^11.0.0",
+    "@nestjs/passport": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/platform-socket.io": "^11.0.1",
+    "@nestjs/swagger": "^11.0.0",
     "@nestjs/throttler": "^6.5.0",
-    "@prisma/adapter-pg": "^7.0.0",
-    "@prisma/client": "^7.0.0",
+    "@nestjs/websockets": "^11.0.1",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.0",
+    "dotenv": "^17.4.2",
     "ioredis": "^6.0.0",
+    "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^4.1.0",
     "passport": "^0.6.0",
     "passport-jwt": "^4.0.1",
-    "reflect-metadata": "^0.1.13",
-    "rxjs": "^7.8.0"
+    "pg": "^8.11.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.0",
+    "socket.io": "^4.8.1"
   },
   "devDependencies": {
-    "@nestjs/cli": "^10.0.0",
-    "@nestjs/testing": "^10.0.0",
+    "@nestjs/cli": "^11.0.0",
+    "@nestjs/testing": "^11.0.1",
     "@types/bcrypt": "^6.0.0",
     "@types/express": "^4.17.0",
     "@types/jest": "^29.5.0",
+    "@types/jsonwebtoken": "^9.0.8",
     "@types/node": "^20.0.0",
     "@types/passport-jwt": "^3.0.13",
     "@types/pg": "^8.11.10",
     "@types/supertest": "^7.2.1",
-    "dotenv": "^16.4.7",
     "jest": "^29.5.0",
-    "pg": "^8.13.1",
-    "prisma": "^7.0.0",
+    "prisma": "^7.9.1",
     "supabase": "^2.115.0",
     "supertest": "^7.2.2",
     "ts-jest": "^29.1.0",
     "ts-node": "^10.9.0",
-    "typescript": "^5.1.3"
+    "typescript": "^5.7.3"
   },
   "jest": {
     "moduleFileExtensions": [
@@ -66,5 +71,11 @@
       "^.+\\.(t|j)s$": "ts-jest"
     },
     "testEnvironment": "node"
+  },
+  "allowScripts": {
+    "@nestjs/core@11.0.1": true,
+    "@prisma/client@7.9.1": true,
+    "@prisma/engines@7.9.1": true,
+    "prisma@7.9.1": true
   }
 }

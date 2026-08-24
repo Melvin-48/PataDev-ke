@@ -9,6 +9,9 @@ import { UserRole } from '@prisma/client';
 
 jest.mock('jwks-rsa', () => ({
   passportJwtSecret: jest.fn().mockReturnValue(() => 'secret'),
+  JwksClient: jest.fn().mockImplementation(() => ({
+    getSigningKey: jest.fn((kid, cb) => cb(null, { getPublicKey: () => 'public-key' })),
+  })),
 }));
 
 

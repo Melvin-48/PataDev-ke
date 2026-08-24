@@ -29,6 +29,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
+  // payload.sub is the Supabase auth UUID; every local FK (User.id,
+  // ClientProfile.userId, Bid.developerId, ...) points at our own User row.
+  // Resolve it once here so guards and services can compare req.user.id
+  // against local ids directly, and so role comes from the DB instead of
+  // Supabase's constant "authenticated" claim.
   async validate(payload: any) {
     const user = await this.usersService.findBySupabaseId(payload.sub);
     if (!user) {
@@ -41,6 +46,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       sub: payload.sub,
       email: payload.email,
       localUserId: user.id,
+      id: user.id, // For compatibility with development branch modules
       role: user.role,
     };
   }

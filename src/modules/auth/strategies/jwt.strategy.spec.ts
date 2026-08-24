@@ -38,6 +38,7 @@ describe('JwtStrategy', () => {
       sub: 'supa-123',
       email: 'test@test.com',
       localUserId: 'db-123',
+      id: 'db-123',
       role: UserRole.CLIENT,
     });
   });

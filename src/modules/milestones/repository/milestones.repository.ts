@@ -14,7 +14,7 @@ export class MilestonesRepository {
     return this.prisma.milestone.findMany({ where: { bidId } });
   }
 
-  updateStatus(id: string, status: MilestoneStatus) {
-    return this.prisma.milestone.update({ where: { id }, data: { status } });
+  updateStatus(id: string, status: string) {
+    return this.prisma.milestone.update({ where: { id }, data: { status: status as MilestoneStatus } });
   }
 }
