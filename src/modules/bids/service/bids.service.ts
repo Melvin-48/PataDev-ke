@@ -1,10 +1,14 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { BidsRepository } from '../repository/bids.repository';
+import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBidDto } from '../dto/create-bid.dto';
 
 @Injectable()
 export class BidsService {
-  constructor(private bidsRepository: BidsRepository) {}
+  constructor(
+    private bidsRepository: BidsRepository,
+    private prisma: PrismaService,
+  ) {}
 
   async create(developerId: string, dto: CreateBidDto) {
     const project = await this.bidsRepository.findProjectById(dto.projectId);
@@ -16,6 +20,14 @@ export class BidsService {
     }
     if (project.client.userId === developerId) {
       throw new BadRequestException('You cannot bid on your own project');
+    }
+    const devProfile = await this.prisma.developerProfile.findUnique({
+      where: { userId: developerId },
+    });
+    if (!devProfile || devProfile.verificationStatus !== 'APPROVED') {
+      throw new BadRequestException(
+        'Your developer account must be verified before you can bid on projects',
+      );
     }
     const existing = await this.bidsRepository.findPendingByDeveloper(
       dto.projectId,

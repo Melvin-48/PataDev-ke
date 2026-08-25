@@ -10,6 +10,19 @@ enum UserRole {
   CLIENT
   DEVELOPER
   ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum ProjectSystemType {
@@ -23,6 +36,7 @@ enum ProjectStatus {
   MATCHED
   COMPLETED
   CANCELLED
+  REMOVED
 }
 
 enum BidStatus {
@@ -37,6 +51,7 @@ enum MilestoneStatus {
   IN_PROGRESS
   SUBMITTED
   APPROVED
+  PAID
 }
 
 enum LedgerEntryType {
@@ -52,17 +67,29 @@ enum LedgerEntryStatus {
   FAILED
 }
 
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  REJECTED
+}
+
 model User {
-  id              String            @id @default(uuid())
-  supabaseId      String            @unique
-  email           String            @unique
-  role            UserRole
-  createdAt       DateTime          @default(now())
-  clientProfile   ClientProfile?
+  id               String            @id @default(uuid())
+  supabaseId       String            @unique
+  email            String            @unique
+  role             UserRole          @default(CLIENT)
+  status           UserStatus        @default(ACTIVE)
+  createdAt        DateTime          @default(now())
+  clientProfile    ClientProfile?
   developerProfile DeveloperProfile?
-  bids            Bid[]
-  messages        Message[]
-  notifications   Notification[]
+  bids             Bid[]
+  messages         Message[]
+  notifications    Notification[]
+  disputesRaised   DisputeReport[]   @relation("DisputeRaisedBy")
+  disputesAgainst  DisputeReport[]   @relation("DisputeAgainst")
+  disputesResolved DisputeReport[]   @relation("DisputeResolvedBy")
+  auditLogs        AuditLog[]
 }
 
 model ClientProfile {
@@ -76,14 +103,17 @@ model ClientProfile {
 }
 
 model DeveloperProfile {
-  id           String   @id @default(uuid())
-  userId       String   @unique
-  user         User     @relation(fields: [userId], references: [id])
-  displayName  String
-  bio          String?
-  techStack    String[]
-  listingTier  String?  // e.g. 'free', 'promoted' - ties to monthly listing fee model
-  portfolioUrl String?
+  id                 String             @id @default(uuid())
+  userId             String             @unique
+  user               User               @relation(fields: [userId], references: [id])
+  displayName        String
+  bio                String?
+  techStack          String[]
+  listingTier        String?
+  portfolioUrl       String?
+  verificationStatus VerificationStatus @default(PENDING)
+  rejectionReason    String?
+  verifiedAt         DateTime?
 }
 
 model Project {
@@ -101,29 +131,30 @@ model Project {
 }
 
 model Bid {
-  id              String      @id @default(uuid())
+  id              String        @id @default(uuid())
   projectId       String
-  project         Project     @relation(fields: [projectId], references: [id])
+  project         Project       @relation(fields: [projectId], references: [id])
   developerId     String
-  developer       User        @relation(fields: [developerId], references: [id])
+  developer       User          @relation(fields: [developerId], references: [id])
   proposedAmount  Decimal
   message         String?
-  status          BidStatus   @default(PENDING)
-  createdAt       DateTime    @default(now())
+  status          BidStatus     @default(PENDING)
+  createdAt       DateTime      @default(now())
   milestones      Milestone[]
   messages        Message[]
   ledgerEntries   LedgerEntry[]
+  disputes        DisputeReport[]
 }
 
 model Milestone {
-  id          String          @id @default(uuid())
-  bidId       String
-  bid         Bid             @relation(fields: [bidId], references: [id])
-  title       String
-  description String?
-  amount      Decimal
-  status      MilestoneStatus @default(PENDING)
-  dueDate     DateTime?
+  id            String          @id @default(uuid())
+  bidId         String
+  bid           Bid             @relation(fields: [bidId], references: [id])
+  title         String
+  description   String?
+  amount        Decimal
+  status        MilestoneStatus @default(PENDING)
+  dueDate       DateTime?
   ledgerEntries LedgerEntry[]
 }
 
@@ -138,15 +169,16 @@ model Message {
 }
 
 model LedgerEntry {
-  id          String            @id @default(uuid())
-  projectBidId String
-  bid         Bid               @relation(fields: [projectBidId], references: [id])
-  milestoneId String?
-  milestone   Milestone?        @relation(fields: [milestoneId], references: [id])
-  type        LedgerEntryType
-  amount      Decimal
-  status      LedgerEntryStatus @default(PENDING)
-  createdAt   DateTime          @default(now())
+  id              String            @id @default(uuid())
+  projectBidId    String
+  bid             Bid               @relation(fields: [projectBidId], references: [id])
+  milestoneId     String?
+  milestone       Milestone?        @relation(fields: [milestoneId], references: [id])
+  type            LedgerEntryType
+  amount          Decimal
+  status          LedgerEntryStatus @default(PENDING)
+  idempotencyKey  String?           @unique
+  createdAt       DateTime          @default(now())
 }
 
 model Notification {
@@ -157,4 +189,40 @@ model Notification {
   payload   Json?
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
+}
+
+model DisputeReport {
+  id             String        @id @default(uuid())
+  bidId          String
+  bid            Bid           @relation(fields: [bidId], references: [id])
+  raisedById     String
+  raisedBy       User          @relation("DisputeRaisedBy", fields: [raisedById], references: [id])
+  againstId      String?
+  against        User?         @relation("DisputeAgainst", fields: [againstId], references: [id])
+  reason         String
+  description    String?
+  status         DisputeStatus @default(OPEN)
+  resolutionNote String?
+  resolvedById   String?
+  resolvedBy     User?         @relation("DisputeResolvedBy", fields: [resolvedById], references: [id])
+  createdAt      DateTime      @default(now())
+  resolvedAt     DateTime?
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  adminId    String
+  admin      User     @relation(fields: [adminId], references: [id])
+  action     String
+  targetType String
+  targetId   String?
+  meta       Json?
+  createdAt  DateTime @default(now())
+}
+
+model PlatformSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
 }

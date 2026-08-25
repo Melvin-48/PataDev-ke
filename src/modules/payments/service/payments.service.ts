@@ -1,15 +1,17 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PaymentsRepository } from '../repository/payments.repository';
+import { PrismaService } from '../../prisma/prisma.service';
 import { InitiatePaymentDto } from '../dto/initiate-payment.dto';
 import { calculateCommission } from '../helpers/commission.helper';
 
 @Injectable()
 export class PaymentsService {
-  constructor(private paymentsRepository: PaymentsRepository) {}
+  constructor(
+    private paymentsRepository: PaymentsRepository,
+    private prisma: PrismaService,
+  ) {}
 
   async initiate(dto: InitiatePaymentDto) {
-    // TODO: call Stripe (Connect, hold-then-transfer pattern) or M-Pesa C2B
-    // to actually collect the client's payment, then record it.
     return this.paymentsRepository.createLedgerEntry({
       projectBidId: dto.bidId,
       type: 'HELD',
@@ -18,22 +20,61 @@ export class PaymentsService {
     });
   }
 
-  async confirmPayout(milestoneId: string, bidId: string, amount: number) {
-    const commission = calculateCommission(amount);
-    await this.paymentsRepository.createLedgerEntry({
-      projectBidId: bidId,
-      milestoneId,
-      type: 'COMMISSION',
-      amount: commission,
-      status: 'COMPLETED',
+  // Admin-triggered payout for an approved milestone. The service itself
+  // resolves bidId and amount from the milestone so the controller never
+  // passes fabricated values. IdempotencyKey prevents double-disbursal
+  // if the same request is retried.
+  async confirmPayout(milestoneId: string) {
+    const milestone = await this.prisma.milestone.findUnique({
+      where: { id: milestoneId },
     });
-    // TODO: trigger Stripe transfer / M-Pesa B2C payout for (amount - commission)
-    return this.paymentsRepository.createLedgerEntry({
-      projectBidId: bidId,
-      milestoneId,
-      type: 'PAYOUT',
-      amount: amount - commission,
-      status: 'PENDING',
+    if (!milestone) {
+      throw new NotFoundException('Milestone not found');
+    }
+    if (milestone.status !== 'APPROVED') {
+      throw new BadRequestException(
+        `Milestone must be APPROVED before payout (current status: ${milestone.status})`,
+      );
+    }
+
+    const rateSetting = await this.prisma.platformSetting.findUnique({
+      where: { key: 'commission_rate' },
+    });
+    const rate = rateSetting ? parseFloat(rateSetting.value) : 0.1;
+    const commission = calculateCommission(Number(milestone.amount), rate);
+    const payoutAmount = Number(milestone.amount) - commission;
+
+    // Both ledger writes run inside a single transaction so partial
+    // failure can't leave an orphaned COMMISSION row.
+    return this.prisma.$transaction(async (tx) => {
+      const commissionEntry = await tx.ledgerEntry.create({
+        data: {
+          projectBidId: milestone.bidId,
+          milestoneId,
+          type: 'COMMISSION',
+          amount: commission,
+          status: 'COMPLETED',
+          idempotencyKey: `${milestoneId}:COMMISSION`,
+        },
+      });
+
+      const payoutEntry = await tx.ledgerEntry.create({
+        data: {
+          projectBidId: milestone.bidId,
+          milestoneId,
+          type: 'PAYOUT',
+          amount: payoutAmount,
+          status: 'PENDING',
+          idempotencyKey: `${milestoneId}:PAYOUT`,
+        },
+      });
+
+      await tx.milestone.update({
+        where: { id: milestoneId },
+        data: { status: 'PAID' },
+      });
+
+      return { commission: commissionEntry, payout: payoutEntry };
     });
   }
 

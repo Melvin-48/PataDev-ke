@@ -1,9 +1,6 @@
-// Calculates the platform's cut. Developer chooses one of two models at
-// listing time (see DeveloperProfile.listingTier) - this only implements
-// the percentage-commission path; the flat monthly listing fee is billed
-// separately via a subscription flow, not per-transaction.
-const COMMISSION_RATE = 0.1; // placeholder - confirm actual % with the team
-
-export function calculateCommission(amount: number): number {
-  return Math.round(amount * COMMISSION_RATE * 100) / 100;
+// Calculates the platform's cut. The actual rate is read from the
+// PlatformSetting table at runtime (see PaymentsService) and passed in;
+// the default 0.1 here is a safety fallback only.
+export function calculateCommission(amount: number, rate: number = 0.1): number {
+  return Math.round(amount * rate * 100) / 100;
 }

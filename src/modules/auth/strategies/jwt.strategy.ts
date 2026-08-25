@@ -42,6 +42,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       );
     }
 
+    // Immediate enforcement: banned/suspended users lose access on the
+    // very next request without waiting for the JWT to expire.
+    if (user.status === 'BANNED') {
+      throw new UnauthorizedException('This account has been banned');
+    }
+    if (user.status === 'SUSPENDED') {
+      throw new UnauthorizedException('This account has been suspended');
+    }
+
     return {
       sub: payload.sub,
       email: payload.email,
