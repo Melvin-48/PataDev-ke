@@ -9,16 +9,11 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as jwt from 'jsonwebtoken';
 import { JwksClient } from 'jwks-rsa';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MessagesService } from '../service/messages.service';
-
-const jwks = new JwksClient({
-  jwksUri: `${process.env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`,
-  cache: true,
-  rateLimit: true,
-});
 
 @WebSocketGateway({
   cors: {
@@ -28,6 +23,7 @@ const jwks = new JwksClient({
 @Injectable()
 export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(MessagesGateway.name);
+  private jwksClient: JwksClient;
 
   @WebSocketServer()
   server: Server;
@@ -35,7 +31,15 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
   constructor(
     private readonly prisma: PrismaService,
     private readonly messagesService: MessagesService,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    const supabaseUrl = this.configService.getOrThrow<string>('SUPABASE_URL').replace(/\/$/, '');
+    this.jwksClient = new JwksClient({
+      jwksUri: `${supabaseUrl}/auth/v1/.well-known/jwks.json`,
+      cache: true,
+      rateLimit: true,
+    });
+  }
 
   async handleConnection(client: Socket) {
     const token = this.extractToken(client);
@@ -47,13 +51,31 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
 
     try {
       const decoded = await this.verifyToken(token);
+      
+      const user = await this.prisma.user.findUnique({
+        where: { supabaseId: decoded.sub },
+      });
+
+      if (!user) {
+        this.logger.warn(`Disconnecting client ${client.id}: Local user not found for supabaseId ${decoded.sub}`);
+        client.disconnect();
+        return;
+      }
+
+      if (user.status === 'BANNED' || user.status === 'SUSPENDED') {
+        this.logger.warn(`Disconnecting client ${client.id}: User status is ${user.status}`);
+        client.disconnect();
+        return;
+      }
+
       // Attach the verified user details to the socket instance
       (client as any).user = {
-        id: decoded.sub,
-        email: decoded.email,
-        role: decoded.role,
+        id: user.id, // Local application User UUID
+        email: user.email,
+        role: user.role,
+        supabaseId: decoded.sub,
       };
-      this.logger.log(`Client authenticated: ${client.id} (User: ${decoded.email})`);
+      this.logger.log(`Client authenticated: ${client.id} (User: ${user.email}, Local ID: ${user.id})`);
     } catch (err) {
       this.logger.error(`Disconnecting client ${client.id}: Token validation failed`, err.stack);
       client.disconnect();
@@ -146,7 +168,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
       jwt.verify(
         token,
         (header, callback) => {
-          jwks.getSigningKey(header.kid, (err, key) => {
+          this.jwksClient.getSigningKey(header.kid, (err, key) => {
             if (err) {
               callback(err);
             } else {
