@@ -1,5 +1,8 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { ProjectStatus } from '@prisma/client';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AdminRepository } from '../repository/admin.repository';
+import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../../common/services/audit.service';
 import { ListUsersDto } from '../dto/list-users.dto';
 import { AdjustUserStatusDto } from '../dto/adjust-user-status.dto';
@@ -8,12 +11,16 @@ import { ResolveDisputeDto } from '../dto/resolve-dispute.dto';
 import { PromoteAdminDto } from '../dto/promote-admin.dto';
 import { SetPlatformFeeDto } from '../dto/set-platform-fee.dto';
 import { CreateDisputeDto } from '../dto/create-dispute.dto';
+import { EVENTS } from '../../../common/events/event-names';
+import { PayoutCompletedEvent } from '../../../common/events/domain-events';
 
 @Injectable()
 export class AdminService {
   constructor(
     private adminRepo: AdminRepository,
     private audit: AuditService,
+    private prisma: PrismaService,
+    private eventEmitter: EventEmitter2,
   ) {}
 
   // ── User management ──────────────────────────────────────────────
@@ -88,11 +95,24 @@ export class AdminService {
   // ── Listing moderation ───────────────────────────────────────────
 
   async moderateListing(adminId: string, projectId: string, action: 'APPROVE' | 'REMOVE') {
-    const project = await this.adminRepo.findUserById(projectId); // just existence check below
+    const project = await this.adminRepo.findProjectById(projectId);
+    if (!project) {
+      throw new NotFoundException('Project not found');
+    }
+
     if (action === 'REMOVE') {
       await this.adminRepo.removeProject(projectId);
+    } else if (action === 'APPROVE') {
+      // Approving a listing ensures it is OPEN for bidding
+      await this.adminRepo.updateProjectStatus(projectId, ProjectStatus.OPEN);
     }
-    await this.audit.log(adminId, 'LISTING_MODERATION', 'Project', projectId, { action });
+
+    await this.audit.log(adminId, 'LISTING_MODERATION', 'Project', projectId, {
+      action,
+      previousStatus: project.status,
+      newStatus: action === 'REMOVE' ? ProjectStatus.REMOVED : ProjectStatus.OPEN,
+    });
+
     return { message: `Project ${action === 'REMOVE' ? 'removed' : 'approved'}` };
   }
 
@@ -143,22 +163,143 @@ export class AdminService {
   }
 
   async resolveDispute(adminId: string, dto: ResolveDisputeDto) {
-    const dispute = await this.adminRepo.findDisputeById(dto.disputeId);
+    const disputeId = dto.disputeId;
+    if (!disputeId) {
+      throw new BadRequestException('disputeId is required');
+    }
+
+    const dispute = await this.adminRepo.findDisputeById(disputeId);
     if (!dispute) throw new NotFoundException('Dispute not found');
     if (dispute.status !== 'OPEN' && dispute.status !== 'UNDER_REVIEW') {
       throw new BadRequestException('Dispute has already been resolved');
     }
-    await this.adminRepo.updateDispute(dto.disputeId, {
-      status: dto.decision as any,
-      resolutionNote: dto.resolutionNote,
-      resolvedBy: { connect: { id: adminId } },
-      resolvedAt: new Date(),
+
+    const decision = dto.decision;
+    const resolutionNote = dto.resolutionNote || dto.resolution || decision;
+
+    // Handle simple rejection
+    if (decision === 'REJECTED') {
+      await this.adminRepo.updateDispute(disputeId, {
+        status: 'REJECTED',
+        resolutionNote,
+        resolvedBy: { connect: { id: adminId } },
+        resolvedAt: new Date(),
+      });
+      await this.audit.log(adminId, 'DISPUTE_REJECTED', 'DisputeReport', disputeId, {
+        decision,
+        resolutionNote,
+      });
+      return { message: 'Dispute rejected', status: 'REJECTED' };
+    }
+
+    // Handle standard note-only resolution
+    if (decision === 'RESOLVED') {
+      await this.adminRepo.updateDispute(disputeId, {
+        status: 'RESOLVED',
+        resolutionNote,
+        resolvedBy: { connect: { id: adminId } },
+        resolvedAt: new Date(),
+      });
+      await this.audit.log(adminId, 'DISPUTE_RESOLVED', 'DisputeReport', disputeId, {
+        decision,
+        resolutionNote,
+      });
+      return { message: 'Dispute resolved', status: 'RESOLVED' };
+    }
+
+    // For REFUND_CLIENT or PAYOUT_DEVELOPER, verify held escrow funds
+    const heldEntries = dispute.bid.ledgerEntries.filter(
+      (e) => e.type === 'HELD' && (e.status === 'COMPLETED' || e.status === 'PENDING'),
+    );
+    const totalHeldAmount = heldEntries.reduce((sum, e) => sum + Number(e.amount), 0);
+
+    if (totalHeldAmount <= 0) {
+      throw new BadRequestException('No held escrow funds available to settle for this dispute');
+    }
+
+    let payoutEventToEmit: PayoutCompletedEvent | null = null;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const updatedDispute = await tx.disputeReport.update({
+        where: { id: disputeId },
+        data: {
+          status: 'RESOLVED',
+          resolutionNote,
+          resolvedById: adminId,
+          resolvedAt: new Date(),
+        },
+      });
+
+      if (decision === 'REFUND_CLIENT') {
+        await tx.ledgerEntry.create({
+          data: {
+            projectBidId: dispute.bidId,
+            type: 'REFUND',
+            amount: totalHeldAmount,
+            status: 'COMPLETED',
+            idempotencyKey: `dispute:${disputeId}:REFUND`,
+          },
+        });
+      } else if (decision === 'PAYOUT_DEVELOPER') {
+        const rateSetting = await tx.platformSetting.findUnique({
+          where: { key: 'commission_rate' },
+        });
+        const rate = rateSetting ? parseFloat(rateSetting.value) : 0.10;
+        const commission = totalHeldAmount * rate;
+        const payoutAmount = totalHeldAmount - commission;
+
+        await tx.ledgerEntry.create({
+          data: {
+            projectBidId: dispute.bidId,
+            type: 'COMMISSION',
+            amount: commission,
+            status: 'COMPLETED',
+            idempotencyKey: `dispute:${disputeId}:COMMISSION`,
+          },
+        });
+
+        const payoutEntry = await tx.ledgerEntry.create({
+          data: {
+            projectBidId: dispute.bidId,
+            type: 'PAYOUT',
+            amount: payoutAmount,
+            status: 'PENDING',
+            idempotencyKey: `dispute:${disputeId}:PAYOUT`,
+          },
+        });
+
+        payoutEventToEmit = new PayoutCompletedEvent(
+          payoutEntry.id,
+          dispute.bidId,
+          dispute.bid.developerId,
+          payoutAmount,
+        );
+      }
+
+      await tx.auditLog.create({
+        data: {
+          adminId,
+          action: 'DISPUTE_RESOLVED_WITH_SETTLEMENT',
+          targetType: 'DisputeReport',
+          targetId: disputeId,
+          meta: { decision, resolutionNote, settledAmount: totalHeldAmount },
+        },
+      });
+
+      return updatedDispute;
     });
-    await this.audit.log(adminId, 'DISPUTE_RESOLVED', 'DisputeReport', dto.disputeId, {
-      decision: dto.decision,
-      resolutionNote: dto.resolutionNote,
-    });
-    return { message: `Dispute ${dto.decision.toLowerCase()}` };
+
+    // Emit event post-commit — never emit inside active transaction
+    if (payoutEventToEmit) {
+      this.eventEmitter.emit(EVENTS.PAYOUT_COMPLETED, payoutEventToEmit);
+    }
+
+    return {
+      message: `Dispute resolved with action: ${decision}`,
+      status: 'RESOLVED',
+      decision,
+      dispute: result,
+    };
   }
 
   // ── Financial reports ────────────────────────────────────────────

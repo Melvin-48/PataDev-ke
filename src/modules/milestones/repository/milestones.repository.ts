@@ -10,6 +10,21 @@ export class MilestonesRepository {
     return this.prisma.milestone.create({ data });
   }
 
+  findById(id: string) {
+    return this.prisma.milestone.findUnique({
+      where: { id },
+      include: {
+        bid: {
+          include: {
+            project: {
+              include: { client: true },
+            },
+          },
+        },
+      },
+    });
+  }
+
   findByBid(bidId: string) {
     return this.prisma.milestone.findMany({ where: { bidId } });
   }

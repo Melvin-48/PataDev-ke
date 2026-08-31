@@ -1,13 +1,17 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BidsRepository } from '../repository/bids.repository';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBidDto } from '../dto/create-bid.dto';
+import { EVENTS } from '../../../common/events/event-names';
+import { BidAcceptedEvent } from '../../../common/events/domain-events';
 
 @Injectable()
 export class BidsService {
   constructor(
     private bidsRepository: BidsRepository,
     private prisma: PrismaService,
+    private eventEmitter: EventEmitter2,
   ) {}
 
   async create(developerId: string, dto: CreateBidDto) {
@@ -64,7 +68,21 @@ export class BidsService {
     if (bid.project.status !== 'OPEN') {
       throw new BadRequestException('The project is no longer open for bidding');
     }
-    return this.bidsRepository.acceptAndMatch(bidId, bid.projectId);
+
+    const acceptedBid = await this.bidsRepository.acceptAndMatch(bidId, bid.projectId);
+
+    // Emit event post-commit — notifications and downstream listeners react safely
+    this.eventEmitter.emit(
+      EVENTS.BID_ACCEPTED,
+      new BidAcceptedEvent(
+        bid.id,
+        bid.projectId,
+        bid.developerId,
+        bid.project.client.userId,
+      ),
+    );
+
+    return acceptedBid;
   }
 
   async decline(bidId: string) {

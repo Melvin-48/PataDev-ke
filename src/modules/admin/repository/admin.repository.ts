@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Prisma } from '@prisma/client';
+import { Prisma, ProjectStatus } from '@prisma/client';
 
 @Injectable()
 export class AdminRepository {
@@ -47,6 +47,20 @@ export class AdminRepository {
     });
   }
 
+  findProjectById(id: string) {
+    return this.prisma.project.findUnique({
+      where: { id },
+      include: { client: true },
+    });
+  }
+
+  updateProjectStatus(id: string, status: ProjectStatus) {
+    return this.prisma.project.update({
+      where: { id },
+      data: { status },
+    });
+  }
+
   removeProject(id: string) {
     return this.prisma.project.update({
       where: { id },
@@ -69,7 +83,19 @@ export class AdminRepository {
   findDisputeById(id: string) {
     return this.prisma.disputeReport.findUnique({
       where: { id },
-      include: { bid: { include: { project: { include: { client: true } }, developer: true } }, raisedBy: true, against: true },
+      include: {
+        bid: {
+          include: {
+            project: { include: { client: true } },
+            developer: true,
+            ledgerEntries: true,
+            milestones: true,
+          },
+        },
+        raisedBy: true,
+        against: true,
+        resolvedBy: true,
+      },
     });
   }
 

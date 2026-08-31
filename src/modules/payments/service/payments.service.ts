@@ -1,14 +1,18 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PaymentsRepository } from '../repository/payments.repository';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InitiatePaymentDto } from '../dto/initiate-payment.dto';
 import { calculateCommission } from '../helpers/commission.helper';
+import { EVENTS } from '../../../common/events/event-names';
+import { PayoutCompletedEvent } from '../../../common/events/domain-events';
 
 @Injectable()
 export class PaymentsService {
   constructor(
     private paymentsRepository: PaymentsRepository,
     private prisma: PrismaService,
+    private eventEmitter: EventEmitter2,
   ) {}
 
   async initiate(dto: InitiatePaymentDto) {
@@ -46,7 +50,7 @@ export class PaymentsService {
 
     // Both ledger writes run inside a single transaction so partial
     // failure can't leave an orphaned COMMISSION row.
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const commissionEntry = await tx.ledgerEntry.create({
         data: {
           projectBidId: milestone.bidId,
@@ -76,6 +80,26 @@ export class PaymentsService {
 
       return { commission: commissionEntry, payout: payoutEntry };
     });
+
+    // Fetch developer ID from the bid to notify developer post-commit
+    const bid = await this.prisma.bid.findUnique({
+      where: { id: milestone.bidId },
+      select: { developerId: true },
+    });
+
+    if (bid?.developerId) {
+      this.eventEmitter.emit(
+        EVENTS.PAYOUT_COMPLETED,
+        new PayoutCompletedEvent(
+          result.payout.id,
+          milestone.bidId,
+          bid.developerId,
+          payoutAmount,
+        ),
+      );
+    }
+
+    return result;
   }
 
   history(bidId: string) {

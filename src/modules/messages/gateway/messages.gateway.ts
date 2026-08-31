@@ -47,13 +47,33 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
 
     try {
       const decoded = await this.verifyToken(token);
-      // Attach the verified user details to the socket instance
+
+      // Resolve the local application User record from the Supabase sub identifier
+      const user = await this.prisma.user.findUnique({
+        where: { supabaseId: decoded.sub },
+      });
+
+      if (!user) {
+        this.logger.warn(`Disconnecting client ${client.id}: User account not found for Supabase sub ${decoded.sub}`);
+        client.disconnect();
+        return;
+      }
+
+      // Immediate enforcement: Banned or suspended users are rejected immediately
+      if (user.status === 'BANNED' || user.status === 'SUSPENDED') {
+        this.logger.warn(`Disconnecting client ${client.id}: User account is ${user.status}`);
+        client.disconnect();
+        return;
+      }
+
+      // Attach the verified local user details to the socket instance
       (client as any).user = {
-        id: decoded.sub,
-        email: decoded.email,
-        role: decoded.role,
+        id: user.id, // Local User UUID matching DB relations (bid.developerId, etc.)
+        supabaseId: decoded.sub,
+        email: user.email,
+        role: user.role,
       };
-      this.logger.log(`Client authenticated: ${client.id} (User: ${decoded.email})`);
+      this.logger.log(`Client authenticated: ${client.id} (User: ${user.email}, Local ID: ${user.id})`);
     } catch (err) {
       this.logger.error(`Disconnecting client ${client.id}: Token validation failed`, err.stack);
       client.disconnect();
@@ -177,7 +197,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
 
     const isDeveloper = bid.developerId === userId;
-    const isClient = bid.project.client.userId === userId;
+    const isClient = bid.project?.client?.userId === userId;
     return isDeveloper || isClient;
   }
 }

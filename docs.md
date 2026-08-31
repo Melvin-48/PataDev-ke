@@ -1,6 +1,6 @@
 # PataDev Ke - Project & API Documentation
 
-This document provides a comprehensive overview of the **PataDev Ke** backend service. It details the project objectives, architecture, module layout, database schema, and acts as an API Route Reference guide for frontend developers and team members.
+This document provides a comprehensive overview of the **PataDev Ke** backend service. It details the project objectives, architecture, module layout, database schema, domain events, deployment instructions, and acts as an API Route Reference guide for frontend developers and team members.
 
 ---
 
@@ -8,462 +8,417 @@ This document provides a comprehensive overview of the **PataDev Ke** backend se
 
 **PataDev Ke** is a developer-to-business matching and project management platform. Its primary goal is to connect local businesses in Kenya (seeking CRM or POS systems) with qualified software developers. 
 
-The platform does not merely act as a directory; it handles the entire lifecycle of a project build:
+The platform handles the entire lifecycle of a project build:
 1. **Brief & Matching**: Clients publish project briefs. Developers submit bids.
-2. **Messaging & Collaboration**: Once a bid is accepted, a secure message channel opens between the developer and the client.
+2. **Messaging & Collaboration**: Once a bid is accepted, a secure realtime message channel opens between the developer and the client.
 3. **Milestone Management**: The project is divided into distinct payment/work milestones.
-4. **Payment Intermediation**: The platform acts as a trusted escrow intermediary. Clients pay for milestones, funds are held by the platform, and are subsequently disbursed to developers upon milestone approval (manually confirmed by administrators during the MVP stage).
+4. **Payment Intermediation**: The platform acts as a trusted escrow intermediary. Clients fund milestones, funds are held by the platform ledger, and are disbursed to developers upon milestone approval (confirmed by administrators during the MVP stage).
 
 ### System Roles
-*   **`CLIENT`**: Represents the business owner. They create projects, review bids, accept/decline bids, manage milestones (approve them), and initiate payments.
-*   **`DEVELOPER`**: Represents the freelance engineer. They browse open projects, place bids, message clients (once matched), work on milestones, and submit them for review.
-*   **`ADMIN`**: Represents platform administrators. They approve developer accounts, moderate listing content, and confirm financial payouts.
+*   **`CLIENT`**: Represents the business owner. They create projects, review bids, accept/decline bids, manage and approve milestones, and initiate escrow payments.
+*   **`DEVELOPER`**: Represents the freelance engineer. They browse open projects, place bids, message clients (once matched), submit milestones for review, and receive milestone payouts.
+*   **`ADMIN`**: Represents platform administrators. They verify developer accounts, moderate project listings, resolve dispute reports, and confirm financial payouts.
+*   **`SUPER_ADMIN`**: Platform superusers with authority to suspend/ban accounts, promote/demote administrators, configure platform commission fees, and view financial audits.
 
 ---
 
 ## 2. Architecture & Module Design
 
-The codebase is built on **NestJS** and uses **Prisma** as the ORM to interact with a **Supabase (PostgreSQL)** database. 
+The codebase is built on **NestJS 11** and uses **Prisma 7** with PostgreSQL connection pooling (`@prisma/adapter-pg`) connecting to **Supabase PostgreSQL**.
 
 ### Module Layout
-Every feature module under [src/modules/](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules) adheres to a strict layered structure:
+Every feature module under `src/modules/` adheres to a strict layered structure:
 *   `controller/`: Handles incoming HTTP requests, defines routes, validates input using DTOs, and attaches Swagger documentation.
-*   `service/`: House of business logic, state transitions, and rules.
+*   `service/`: House of business logic, state transitions, and domain rules.
 *   `dto/`: Request/Response schemas, decorated with `class-validator` rules and `@ApiProperty` decorators.
 *   `repository/`: Standardized database access queries using Prisma. Contains no business logic.
-*   `guards/`: Route-level access control specific to the module (e.g., verifying if the user is the project owner or if a bid was accepted).
-*   `strategies/`: Passport strategies (mainly inside the authentication module).
-*   `helpers/`: Pure utility functions supporting the service layer (calculations, status checks, etc.).
-
-### Module Ownership & Split
-*   **Auth & User Profiles**: Derrick
-*   **Projects & Matching**: Melvin
-*   **Milestones & Notifications**: Peter
-*   **Payments & Messaging**: Lawrence
-*   **Admin & Shared Infrastructure**: Shared / Team Lead
-
-### Module Dependency Flow
-Because of database constraints and business workflows, modules must be built/interfaced in this specific order:
-`Auth` $\rightarrow$ `Users` $\rightarrow$ `Projects` $\rightarrow$ `Bids` $\rightarrow$ `Messages` (gated on bid status) $\rightarrow$ `Milestones` $\rightarrow$ `Payments`
+*   `guards/`: Route-level access control specific to the module (e.g., verifying project ownership or accepted bid engagement).
+*   `strategies/`: Passport strategies (e.g., Supabase JWKS verification).
+*   `listeners/`: Event listeners responding to domain events asynchronously (e.g., notifications).
 
 ---
 
 ## 3. Database Schema Overview
 
-The database models are configured in [schema.prisma](file:///home/lawrence/Projects/attach/PataDev-ke/prisma/schema.prisma). Below is a summary of the core models and their relationships:
+The database models are configured in `prisma/schema.prisma`. Below is a summary of the core models and their relationships:
 
 | Model | Description | Relations / Keys |
 | :--- | :--- | :--- |
-| **`User`** | Primary auth record. Stores email, Supabase ID, and role. | Linked to `ClientProfile`, `DeveloperProfile`, `Bid`, `Message`, `Notification` |
+| **`User`** | Primary auth record. Stores email, Supabase Auth UUID (`supabaseId`), and role. | Linked to `ClientProfile`, `DeveloperProfile`, `Bid`, `Message`, `Notification`, `AuditLog`, `DisputeReport` |
 | **`ClientProfile`** | Business profile details for Client users. | Belongs to `User`, has many `Project`s |
 | **`DeveloperProfile`** | Professional profile details for Developer users. | Belongs to `User` |
 | **`Project`** | Represents a system build request (CRM or POS). | Created by `ClientProfile`, has many `Bid`s |
-| **`Bid`** | A developer's proposal for a project. | Belongs to `Project` and `User` (Developer), has many `Milestone`s, `Message`s, `LedgerEntry`s |
+| **`Bid`** | A developer's proposal for a project. | Belongs to `Project` and `User` (Developer), has many `Milestone`s, `Message`s, `LedgerEntry`s, `DisputeReport`s |
 | **`Milestone`** | A discrete phase of project delivery. | Belongs to `Bid`, has many `LedgerEntry`s |
 | **`Message`** | An instant message exchanged between matched users. | Belongs to `Bid` (chat room thread) and `User` (Sender) |
 | **`LedgerEntry`** | Financial tracking of deposits, commissions, payouts, and refunds. | Belongs to `Bid` and `Milestone` |
 | **`Notification`** | System alerts sent to users regarding status changes. | Belongs to `User` |
+| **`DisputeReport`** | Grievances raised on a bid by clients or developers. | Belongs to `Bid`, `User` (Raiser, Against, ResolvedBy) |
+| **`AuditLog`** | Immutable log of administrative interventions and changes. | Belongs to `User` (Admin) |
+| **`PlatformSetting`** | Key-value store for runtime configuration (e.g. `commission_rate`). | Unique `key` |
 
 ---
 
 ## 4. API Route Reference
 
-All endpoints are hosted at the root (`http://localhost:3000`). Swagger documentation is auto-generated and interactive at `http://localhost:3000/api/docs`.
+All endpoints are hosted at the root (`http://localhost:3000` or production host). Swagger documentation is auto-generated and interactive at `/api/docs`.
 
 ### Authentication Required (`@UseGuards(JwtAuthGuard)`)
-Most routes (except Health and Auth) require an `Authorization` header containing a valid Bearer token:
-`Authorization: Bearer <JWT_TOKEN>`
+All protected routes require an `Authorization` header containing a valid Supabase JWT Bearer token:
+`Authorization: Bearer <SUPABASE_JWT_ACCESS_TOKEN>`
 
 ---
 
 ### 4.1 Health Check Module
-Used by hosting services (Render/Railway) to verify if the server is healthy.
 
 #### `GET /health`
 *   **Access**: Public (No Auth required)
 *   **Guard**: None
-*   **Controller**: [HealthController](file:///home/lawrence/Projects/attach/PataDev-ke/src/common/health/health.controller.ts)
+*   **Controller**: `HealthController`
 *   **Response**: `{ "status": "ok" }`
 
 ---
 
 ### 4.2 Authentication Module
-Handles onboarding and login. Uses Supabase Auth under the hood.
 
-#### `POST /auth/sign-up`
-*   **Access**: Public
-*   **Guard**: None
-*   **Controller**: [AuthController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/auth/controller/auth.controller.ts)
-*   **Request Body (`SignUpDto`)**:
-    ```json
-    {
-      "email": "client@business.co.ke",
-      "password": "strongpassword123",
-      "role": "CLIENT" // or "DEVELOPER"
-    }
-    ```
-*   **Response**: `AuthResponseDto` (contains user info and JWT access token)
+Authentication is handled client-side via the **Supabase Auth client SDK**. The backend does not expose custom sign-up or sign-in password endpoints, but rather verifies Supabase-issued JWTs against Supabase's public JWKS endpoint (`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`).
 
-#### `POST /auth/sign-in`
-*   **Access**: Public
-*   **Guard**: None
-*   **Controller**: [AuthController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/auth/controller/auth.controller.ts)
-*   **Request Body (`SignInDto`)**:
-    ```json
-    {
-      "email": "client@business.co.ke",
-      "password": "strongpassword123"
-    }
-    ```
-*   **Response**: `AuthResponseDto` (contains user info and JWT access token)
+#### Authentication Flow
+
+1. **Sign up / Sign in (Frontend)**:
+   * **Email & Password**: The client calls `supabase.auth.signUp()` or `supabase.auth.signInWithPassword()`.
+   * **Google OAuth**: The client calls `supabase.auth.signInWithOAuth({ provider: 'google' })`.
+   * Both methods return a Supabase session containing a JWT access token.
+
+2. **Complete Registration (Backend Sync)**:
+   * After the very first sign-up on Supabase, the frontend calls:
+   * **`POST /auth/complete-registration`**
+   * **Headers**: `Authorization: Bearer <SUPABASE_JWT_ACCESS_TOKEN>`
+   * **Request Body (`CompleteRegistrationDto`)**:
+     ```json
+     {
+       "role": "CLIENT" // or "DEVELOPER"
+     }
+     ```
+   * **Guard**: `SupabaseVerifiedGuard` (verifies the Supabase JWT cryptographically via JWKS without requiring a local database row beforehand).
+   * **Response**: `UserResponseDto` (local user profile with role).
+   * *Note: `ADMIN` and `SUPER_ADMIN` cannot be self-assigned.*
+
+3. **All Subsequent API Requests**:
+   * The frontend attaches the Supabase JWT as a Bearer token.
+   * The backend `JwtStrategy` validates the token against Supabase JWKS, resolves the local `User` record by `supabaseId`, and checks that the account is not `SUSPENDED` or `BANNED`.
+
+> [!NOTE]
+> **Removed Endpoints**: `POST /auth/sign-up` and `POST /auth/sign-in` from earlier scaffolds no longer exist. Authentication is strictly delegated to Supabase Auth.
 
 ---
 
 ### 4.3 Users & Profiles Module
-Manages creation and lookup of role-specific profile details.
 
-#### `GET /users/:id`
+Manages profile creation and lookup. User profile lookups (`findBySupabaseId`) are cached in Redis with a 60-second TTL.
+
+#### `GET /users/me`
 *   **Access**: Authenticated
-*   **Guard**: `JwtAuthGuard`
-*   **Controller**: [UsersController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/users/controller/users.controller.ts)
-*   **Parameters**: `id` (User UUID)
-*   **Response**: User object with nested profiles if they exist.
+*   **Response**: Current authenticated user object with client/developer profile details.
 
-#### `POST /users/:id/client-profile`
-*   **Access**: Authenticated (User ID in path must match the JWT user)
-*   **Guard**: `JwtAuthGuard`
-*   **Controller**: [UsersController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/users/controller/users.controller.ts)
-*   **Parameters**: `id` (User UUID)
+#### `POST /users/me/client-profile`
+*   **Access**: Authenticated `CLIENT`
 *   **Request Body (`CreateClientProfileDto`)**:
     ```json
     {
       "businessName": "Jaza Retailers Ltd",
-      "businessType": "Retail", // Optional
-      "phone": "+254712345678" // Optional
+      "businessType": "Retail",
+      "phone": "+254712345678"
     }
     ```
-*   **Response**: Created client profile object.
 
-#### `POST /users/:id/developer-profile`
-*   **Access**: Authenticated (User ID in path must match the JWT user)
-*   **Guard**: `JwtAuthGuard`
-*   **Controller**: [UsersController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/users/controller/users.controller.ts)
-*   **Parameters**: `id` (User UUID)
+#### `PATCH /users/me/client-profile`
+*   **Access**: Authenticated `CLIENT`
+*   **Request Body (`UpdateClientProfileDto`)**: Partial fields of client profile.
+
+#### `POST /users/me/developer-profile`
+*   **Access**: Authenticated `DEVELOPER`
 *   **Request Body (`CreateDeveloperProfileDto`)**:
     ```json
     {
       "displayName": "Jane Wanjiru",
-      "bio": "Full-stack developer with 4 years experience.", // Optional
+      "bio": "Full-stack developer with 4 years experience.",
       "techStack": ["React", "NestJS", "PostgreSQL"],
-      "portfolioUrl": "https://janewanjiru.dev" // Optional
+      "portfolioUrl": "https://janewanjiru.dev"
     }
     ```
-*   **Response**: Created developer profile object.
+
+#### `PATCH /users/me/developer-profile`
+*   **Access**: Authenticated `DEVELOPER`
+*   **Request Body (`UpdateDeveloperProfileDto`)**: Partial fields of developer profile.
+
+#### `GET /users/:userId`
+*   **Access**: Authenticated (User must own the profile or be an admin)
 
 ---
 
 ### 4.4 Projects Module
-Allows clients to request builds and developers to search for work.
+
+Allows clients to manage project briefs and developers to search for open opportunities.
 
 #### `POST /projects`
 *   **Access**: Authenticated `CLIENT`
-*   **Guard**: `JwtAuthGuard`, `RolesGuard` (`@Roles('CLIENT')`)
-*   **Controller**: [ProjectsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/projects/controller/projects.controller.ts)
 *   **Request Body (`CreateProjectDto`)**:
     ```json
     {
-      "title": "Retail POS System",
-      "description": "Need a point-of-sale system that supports M-Pesa integration and offline caching.",
-      "systemType": "POS", // "POS" or "CRM"
-      "budgetMin": 50000, // Optional
-      "budgetMax": 120000 // Optional
+      "title": "Supermarket POS System",
+      "description": "Custom Point-of-Sale with M-Pesa STK push and offline inventory sync.",
+      "systemType": "POS",
+      "budgetMin": 50000,
+      "budgetMax": 120000
     }
     ```
 *   **Response**: Created project brief in `DRAFT` status.
 
 #### `GET /projects`
 *   **Access**: Authenticated
-*   **Guard**: `JwtAuthGuard`, `RolesGuard`
-*   **Controller**: [ProjectsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/projects/controller/projects.controller.ts)
-*   **Query Parameters (`ProjectFilterDto`)**:
-    *   `systemType`: `"POS"` or `"CRM"` (Optional)
-    *   `status`: `"DRAFT"`, `"OPEN"`, `"MATCHED"`, `"COMPLETED"`, `"CANCELLED"` (Optional)
-    *   `search`: Text search string for title and description (Optional)
-    *   `budgetMin`: Minimum budget constraint (Optional)
-    *   `budgetMax`: Maximum budget constraint (Optional)
-    *   `page`: Page number, defaults to `1` (Optional)
-    *   `pageSize`: Number of projects per page, capped at `50`, defaults to `20` (Optional)
-*   **Response**: Paginated list of open/published projects.
+*   **Query Parameters (`ProjectFilterDto`)**: `systemType`, `status` (defaults to `OPEN`), `search`, `budgetMin`, `budgetMax`, `page`, `pageSize`.
+*   **Response**: Paginated list of projects.
 
 #### `GET /projects/:id`
-*   **Access**: Authenticated
-*   **Guard**: `JwtAuthGuard`, `RolesGuard`
-*   **Controller**: [ProjectsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/projects/controller/projects.controller.ts)
-*   **Parameters**: `id` (Project UUID)
-*   **Response**: Complete project details.
+*   **Access**: Authenticated (Drafts visible only to owner; open projects visible to all).
 
 #### `PATCH /projects/:id`
-*   **Access**: Authenticated `CLIENT` (Must own the project)
-*   **Guard**: `JwtAuthGuard`, `RolesGuard` (`@Roles('CLIENT')`), `ProjectOwnerGuard`
-*   **Controller**: [ProjectsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/projects/controller/projects.controller.ts)
-*   **Parameters**: `id` (Project UUID)
-*   **Request Body (`UpdateProjectDto`)**: Partial fields of `CreateProjectDto`.
-*   **Response**: Updated project details.
-*   **Note**: Edits are frozen once a project is `MATCHED`.
+*   **Access**: Authenticated `CLIENT` (Owner only; allowed while `DRAFT` or `OPEN`).
 
 #### `POST /projects/:id/publish`
-*   **Access**: Authenticated `CLIENT` (Must own the project)
-*   **Guard**: `JwtAuthGuard`, `RolesGuard` (`@Roles('CLIENT')`), `ProjectOwnerGuard`
-*   **Controller**: [ProjectsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/projects/controller/projects.controller.ts)
-*   **Parameters**: `id` (Project UUID)
-*   **Response**: Updated project with status set to `OPEN`.
+*   **Access**: Authenticated `CLIENT` (Owner only; transitions status to `OPEN`).
 
 #### `POST /projects/:id/cancel`
-*   **Access**: Authenticated `CLIENT` (Must own the project)
-*   **Guard**: `JwtAuthGuard`, `RolesGuard` (`@Roles('CLIENT')`), `ProjectOwnerGuard`
-*   **Controller**: [ProjectsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/projects/controller/projects.controller.ts)
-*   **Parameters**: `id` (Project UUID)
-*   **Response**: Updated project with status set to `CANCELLED`.
+*   **Access**: Authenticated `CLIENT` (Owner only; transitions status to `CANCELLED`).
 
 ---
 
 ### 4.5 Bids Module
-Allows matching developer proposals to project requirements.
+
+Allows verified developers to submit proposals and clients to accept bids.
 
 #### `POST /bids`
-*   **Access**: Authenticated `DEVELOPER`
-*   **Guard**: `JwtAuthGuard`, `RolesGuard` (`@Roles('DEVELOPER')`)
-*   **Controller**: [BidsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/bids/controller/bids.controller.ts)
+*   **Access**: Authenticated `DEVELOPER` (Requires `verificationStatus === 'APPROVED'`)
 *   **Request Body (`CreateBidDto`)**:
     ```json
     {
       "projectId": "project-uuid-here",
       "proposedAmount": 75000,
-      "message": "I have previously built POS systems for supermarkets in Nairobi." // Optional
+      "message": "I have previously built POS systems with offline caching."
     }
     ```
-*   **Response**: Created bid in `PENDING` status.
-*   **Note**: Enforces that the project status is `OPEN`, the developer does not own the project, and only one pending bid per developer is allowed on a project.
+
+#### `GET /bids/mine`
+*   **Access**: Authenticated `DEVELOPER` (Returns all bids placed by the developer).
 
 #### `GET /bids/project/:projectId`
-*   **Access**: Authenticated
-*   **Guard**: `JwtAuthGuard`, `RolesGuard`
-*   **Controller**: [BidsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/bids/controller/bids.controller.ts)
-*   **Parameters**: `projectId` (Project UUID)
-*   **Response**: List of bids submitted for the project.
+*   **Access**: Authenticated `CLIENT` (Owner of the project only).
 
 #### `POST /bids/:id/accept`
-*   **Access**: Authenticated `CLIENT` (Must own the project linked to the bid)
-*   **Guard**: `JwtAuthGuard`, `RolesGuard` (`@Roles('CLIENT')`), `BidProjectClientGuard`
-*   **Controller**: [BidsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/bids/controller/bids.controller.ts)
-*   **Parameters**: `id` (Bid UUID)
-*   **Response**: Updated bid object.
-*   **Note**: Accepting a bid automatically sets that bid to `ACCEPTED`, sets all other pending bids on that project to `REJECTED`, and sets the project status to `MATCHED`.
+*   **Access**: Authenticated `CLIENT` (Owner of the project only).
+*   **Effect**: Atomically updates bid to `ACCEPTED`, other pending bids on the project to `REJECTED`, and project status to `MATCHED`. Emits `bid.accepted` domain event.
 
 #### `POST /bids/:id/decline`
-*   **Access**: Authenticated `CLIENT` (Must own the project linked to the bid)
-*   **Guard**: `JwtAuthGuard`, `RolesGuard` (`@Roles('CLIENT')`), `BidProjectClientGuard`
-*   **Controller**: [BidsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/bids/controller/bids.controller.ts)
-*   **Parameters**: `id` (Bid UUID)
-*   **Response**: Updated bid object with status set to `REJECTED`.
+*   **Access**: Authenticated `CLIENT` (Owner of the project only).
 
 ---
 
-### 4.6 Messages (Chat) Module
-Provides direct client-developer communication once matched.
+### 4.6 Messages (Realtime Chat) Module
 
-#### `POST /messages`
-*   **Access**: Authenticated `CLIENT` or `DEVELOPER` (User must be part of the accepted bid conversation)
-*   **Guard**: `JwtAuthGuard`, `BidAcceptedGuard`
-*   **Controller**: [MessagesController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/messages/controller/messages.controller.ts)
-*   **Request Body (`SendMessageDto`)**:
-    ```json
-    {
-      "bidId": "accepted-bid-uuid",
-      "content": "Hi, let's discuss the first milestone details."
-    }
-    ```
-*   **Response**: Created message object.
-*   **Note**: Restricts chat context strictly to bids that have been `ACCEPTED`.
+Direct communication between matched clients and developers.
 
-#### `GET /messages/bid/:bidId`
-*   **Access**: Authenticated `CLIENT` or `DEVELOPER` (User must be part of the accepted bid conversation)
-*   **Guard**: `JwtAuthGuard`, `BidAcceptedGuard`
-*   **Controller**: [MessagesController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/messages/controller/messages.controller.ts)
-*   **Parameters**: `bidId` (Bid UUID)
-*   **Response**: Array of chronological messages in the thread.
+#### REST Endpoints
+*   `POST /messages`: Send a message in an accepted engagement (`SendMessageDto`: `{ "bidId": "...", "content": "..." }`).
+*   `GET /messages/bid/:bidId`: Fetch message history for an accepted engagement.
 
-#### WebSockets Realtime Chat API
-The chat also supports bi-directional, realtime updates via Socket.io.
-
-*   **Endpoint**: `ws://localhost:3000` (or `wss://` in production)
-*   **Gateway Controller**: [MessagesGateway](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/messages/gateway/messages.gateway.ts)
-*   **Authentication**: Connection is authenticated during the handshake. The client must pass the Supabase JWT token either in:
-    1.  `handshake.auth.token` (e.g. `token: "Bearer <JWT>"` or `token: "<JWT>"`)
-    2.  `handshake.query.token` (e.g. `ws://localhost:3000?token=<JWT>`)
-    *If token verification fails, the connection is instantly disconnected.*
-
-##### WebSocket Client Actions (Emit)
-1.  **Join Room (`joinRoom`)**:
-    Must be sent immediately after connecting to receive messages in a specific engagement room.
-    *   **Payload**:
-        ```json
-        {
-          "bidId": "accepted-bid-uuid"
-        }
-        ```
-    *   **Response Events**: Emits `joinedRoom` with payload `{ "bidId": "..." }` on success, or `error` if unauthorized.
-2.  **Send Message (`sendMessage`)**:
-    Sends and persists a new message.
-    *   **Payload**:
-        ```json
-        {
-          "bidId": "accepted-bid-uuid",
-          "content": "Hi, this is a realtime message!"
-        }
-        ```
-
-##### WebSocket Server Events (Listen)
-1.  **Receive Message (`message`)**:
-    Triggered when any participant in the room sends a message.
-    *   **Broadcast Payload**:
-        ```json
-        {
-          "id": "message-uuid",
-          "bidId": "accepted-bid-uuid",
-          "senderId": "user-uuid",
-          "content": "Hi, this is a realtime message!",
-          "createdAt": "2026-08-24T12:00:00.000Z"
-        }
-        ```
-2.  **Error Handler (`error`)**:
-    Triggered on authentication/authorization validation failures.
-    *   **Payload**: String error message.
+#### WebSockets Realtime API (Socket.io)
+*   **Protocol**: `ws://` or `wss://`
+*   **Handshake Authentication**: Provide Supabase JWT via `auth.token` or query param `?token=<JWT>`. The gateway resolves the local `User.id` and validates account status.
+*   **Client Emit `joinRoom`**: `{ "bidId": "<bid-uuid>" }` — Joins the engagement chat room if the user is the developer or client.
+*   **Client Emit `sendMessage`**: `{ "bidId": "<bid-uuid>", "content": "Hello!" }` — Persists to DB and broadcasts to room.
+*   **Server Emit `message`**: Broadcasts the saved message payload to room participants.
 
 ---
 
 ### 4.7 Milestones Module
-Handles stage-by-stage definition and progression of project deliverables.
+
+Manages project deliverables and progression.
 
 #### `POST /milestones`
 *   **Access**: Authenticated
-*   **Guard**: `JwtAuthGuard`
-*   **Controller**: [MilestonesController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/milestones/controller/milestones.controller.ts)
 *   **Request Body (`CreateMilestoneDto`)**:
     ```json
     {
-      "bidId": "accepted-bid-uuid",
-      "title": "Database Schema & Supabase Setup",
-      "description": "Establish PostgreSQL tables, configure Supabase Auth integration.", // Optional
-      "amount": 25000,
-      "dueDate": "2026-09-15T12:00:00.000Z" // Optional ISO string
+      "bidId": "bid-uuid",
+      "title": "Phase 1: Architecture & UI Prototype",
+      "description": "Wireframes, schema design, and core layout.",
+      "amount": 30000,
+      "dueDate": "2026-10-01T00:00:00.000Z"
     }
     ```
-*   **Response**: Created milestone object in `PENDING` status.
 
 #### `GET /milestones/bid/:bidId`
-*   **Access**: Authenticated
-*   **Guard**: `JwtAuthGuard`
-*   **Controller**: [MilestonesController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/milestones/controller/milestones.controller.ts)
-*   **Parameters**: `bidId` (Bid UUID)
-*   **Response**: Array of milestones linked to the bid.
+*   **Access**: Authenticated (Returns milestones for the bid).
 
 #### `PATCH /milestones/:id/status`
-*   **Access**: Authenticated `CLIENT` or `DEVELOPER` (User must be the client/developer tied to the milestone's project)
-*   **Guard**: `JwtAuthGuard`, `MilestoneAccessGuard`
-*   **Controller**: [MilestonesController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/milestones/controller/milestones.controller.ts)
-*   **Parameters**: `id` (Milestone UUID)
-*   **Request Body (`UpdateMilestoneStatusDto`)**:
-    ```json
-    {
-      "status": "IN_PROGRESS" // "PENDING", "IN_PROGRESS", "SUBMITTED", "APPROVED"
-    }
-    ```
-*   **Response**: Updated milestone details.
+*   **Access**: Authenticated (Engagement participants only).
+*   **Request Body (`UpdateMilestoneStatusDto`)**: `{ "status": "SUBMITTED" }`
+*   **State Machine Transitions**:
+    *   `PENDING` $\rightarrow$ `IN_PROGRESS`
+    *   `IN_PROGRESS` $\rightarrow$ `SUBMITTED` *(Emits `milestone.submitted`)*
+    *   `SUBMITTED` $\rightarrow$ `APPROVED` *(Emits `milestone.approved`)* or `IN_PROGRESS` (revisions)
+    *   `APPROVED` $\rightarrow$ `PAID` *(Upon payout confirmation)*
 
 ---
 
 ### 4.8 Payments Module
-Controls escrow financial movement.
+
+Manages platform escrow ledger entries.
 
 #### `POST /payments/initiate`
-*   **Access**: Authenticated
-*   **Guard**: `JwtAuthGuard`
-*   **Controller**: [PaymentsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/payments/controller/payments.controller.ts)
-*   **Request Body (`InitiatePaymentDto`)**:
-    ```json
-    {
-      "bidId": "accepted-bid-uuid",
-      "amount": 25000
-    }
-    ```
-*   **Response**: Success indicator. Creates a `LedgerEntry` of type `HELD` in `PENDING` status representing client escrow.
+*   **Access**: Authenticated `CLIENT`
+*   **Request Body (`InitiatePaymentDto`)**: `{ "bidId": "...", "amount": 30000 }`
+*   **Effect**: Creates a `HELD` ledger entry with `PENDING` status.
 
 #### `POST /payments/confirm-payout`
-*   **Access**: Authenticated `ADMIN`
-*   **Guard**: `JwtAuthGuard`, `AdminOnlyGuard`
-*   **Controller**: [PaymentsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/payments/controller/payments.controller.ts)
-*   **Request Body (`PayoutConfirmationDto`)**:
-    ```json
-    {
-      "milestoneId": "milestone-uuid-here"
-    }
-    ```
-*   **Response**: Confirmation log. Adjusts ledger statuses, indicating developer disbursement.
+*   **Access**: Authenticated `ADMIN` or `SUPER_ADMIN`
+*   **Request Body (`PayoutConfirmationDto`)**: `{ "milestoneId": "..." }`
+*   **Effect**: In a single atomic `$transaction`:
+    1. Computes platform commission from platform settings (`commission_rate`).
+    2. Creates a `COMMISSION` ledger entry with idempotency key.
+    3. Creates a `PAYOUT` ledger entry for the developer.
+    4. Updates milestone status to `PAID`.
+    5. Emits `payout.completed` domain event.
 
 #### `GET /payments/bid/:bidId`
-*   **Access**: Authenticated
-*   **Guard**: `JwtAuthGuard`
-*   **Controller**: [PaymentsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/payments/controller/payments.controller.ts)
-*   **Parameters**: `bidId` (Bid UUID)
-*   **Response**: Array of ledger entries linked to the bid.
+*   **Access**: Authenticated (Returns ledger history for the engagement).
 
 ---
 
 ### 4.9 Admin Module
-Restricted operations for managing platform listings and users.
 
-#### `POST /admin/approve-account`
-*   **Access**: Authenticated `ADMIN`
-*   **Guard**: `JwtAuthGuard`, `RolesGuard` (`@Roles('ADMIN')`)
-*   **Controller**: [AdminController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/admin/controller/admin.controller.ts)
-*   **Request Body (`ApproveAccountDto`)**:
-    ```json
-    {
-      "userId": "user-uuid-to-approve"
-    }
-    ```
-*   **Response**: Success confirmation.
+Comprehensive governance operations for `ADMIN` and `SUPER_ADMIN`.
 
-#### `POST /admin/moderate-listing`
-*   **Access**: Authenticated `ADMIN`
-*   **Guard**: `JwtAuthGuard`, `RolesGuard` (`@Roles('ADMIN')`)
-*   **Controller**: [AdminController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/admin/controller/admin.controller.ts)
-*   **Request Body (`ModerateListingDto`)**:
-    ```json
-    {
-      "projectId": "project-uuid-to-moderate",
-      "action": "APPROVE" // or "REMOVE"
-    }
-    ```
-*   **Response**: Success confirmation.
+#### User Management & Moderation
+*   `GET /admin/users`: Search and filter users by role, status, email, or business name.
+*   `GET /admin/users/:id`: View full user and profile details.
+*   `PATCH /admin/users/:id/status` (`SUPER_ADMIN`): Adjust status (`ACTIVE`, `SUSPENDED`, `BANNED`).
+*   `POST /admin/verify-developer`: Approve or reject developer profiles with required reason.
+*   `POST /admin/moderate-listing`: Set project status to `OPEN` (approve) or `REMOVED`.
+
+#### Disputes
+*   `POST /admin/disputes`: Raise a dispute against an engagement.
+*   `GET /admin/disputes`: List all dispute tickets.
+*   `GET /admin/disputes/:id`: View dispute ticket details and engagement context.
+*   `PATCH /admin/disputes/:id`: Resolve dispute (`RESOLVED` or `REJECTED`) with resolution notes.
+
+#### Financials & Platform Settings (`SUPER_ADMIN`)
+*   `POST /admin/promote`: Promote or demote user roles.
+*   `GET /admin/financial-report`: View aggregated totals grouped by ledger type and status.
+*   `GET /admin/settings/fee`: View current commission rate.
+*   `PATCH /admin/settings/fee`: Update commission rate.
+*   `GET /admin/audit-logs`: View immutable audit trails of all administrative actions.
 
 ---
 
 ### 4.10 Notifications Module
-Informs users of real-time state changes.
 
-#### `GET /notifications`
-*   **Access**: Authenticated
-*   **Guard**: `JwtAuthGuard`
-*   **Controller**: [NotificationsController](file:///home/lawrence/Projects/attach/PataDev-ke/src/modules/notifications/controller/notifications.controller.ts)
-*   **Response**: Array of notifications belonging to the logged-in user.
+*   `GET /notifications`: Retrieve the authenticated user's notification list.
 
 ---
 
-## 5. End-to-End Workflow Guide
+## 5. Domain Events & Asynchronous Communication
 
-Here is how a project moves through the platform step-by-step:
+Cross-module communication is decoupled using NestJS **`EventEmitter2`**. Events are emitted **only after the underlying database transactions commit**.
+
+```mermaid
+graph TD
+    Bids[BidsService.accept] -->|Emits| E1[EVENTS.BID_ACCEPTED]
+    Milestones1[MilestonesService -> SUBMITTED] -->|Emits| E2[EVENTS.MILESTONE_SUBMITTED]
+    Milestones2[MilestonesService -> APPROVED] -->|Emits| E3[EVENTS.MILESTONE_APPROVED]
+    Payments[PaymentsService.confirmPayout] -->|Emits| E4[EVENTS.PAYOUT_COMPLETED]
+    
+    E1 --> Listener[NotificationsListener]
+    E2 --> Listener
+    E3 --> Listener
+    E4 --> Listener
+    
+    Listener -->|Safe Notify| DB[(Notification Table)]
+```
+
+### Event Registry (`src/common/events/`)
+
+| Event Constant | Payload Class | Trigger | Target Recipient |
+| :--- | :--- | :--- | :--- |
+| `EVENTS.BID_ACCEPTED` | `BidAcceptedEvent` | Client accepts developer's bid | Developer |
+| `EVENTS.MILESTONE_SUBMITTED` | `MilestoneSubmittedEvent` | Developer submits milestone work | Client |
+| `EVENTS.MILESTONE_APPROVED` | `MilestoneApprovedEvent` | Client approves milestone deliverables | Developer |
+| `EVENTS.PAYOUT_COMPLETED` | `PayoutCompletedEvent` | Admin confirms milestone disbursal | Developer |
+
+---
+
+## 6. Deployment & Hosting (Render PaaS)
+
+The **PataDev Ke** backend requires long-lived bidirectional TCP connections for **Socket.io WebSockets** and persistent **Redis connection pooling**. It is configured for deployment on **Render** (as a Web Service) or any containerized PaaS (Fly.io, Railway, AWS ECS).
+
+```mermaid
+graph LR
+    subgraph Render Web Service
+        API[NestJS API Server :3000]
+        WS[Socket.io Gateway]
+        Events[EventEmitter2 Engine]
+    end
+    
+    subgraph Supabase Cloud
+        PG[(PostgreSQL Database)]
+        Auth[Supabase Auth IdP]
+        Storage[Supabase Storage]
+    end
+    
+    subgraph Redis Provider
+        Cache[(Upstash / Redis Cloud)]
+    end
+    
+    API -->|Prisma Pg Adapter| PG
+    API -->|JWKS Key Retrieval| Auth
+    API -->|User Cache| Cache
+```
+
+### Render Deployment Configuration
+
+1. **Environment**: Node.js
+2. **Build Command**:
+   ```bash
+   npm install && npm run prisma:generate && npm run build
+   ```
+3. **Start Command**:
+   ```bash
+   npm run start:prod
+   ```
+4. **Health Check Path**: `/health`
+
+### Required Environment Variables
+
+```env
+# Database (Supabase PostgreSQL)
+DATABASE_URL="postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1"
+DIRECT_URL="postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:5432/postgres"
+
+# Supabase Auth JWKS Verification
+SUPABASE_URL="https://[ref].supabase.co"
+
+# Redis Cache (Upstash Redis or Redis Cloud)
+REDIS_URL="redis://default:[password]@[host]:[port]"
+
+# App Configuration
+PORT=3000
+NODE_ENV=production
+```
+
+---
+
+## 7. End-to-End Workflow Guide
 
 ```mermaid
 sequenceDiagram
@@ -471,30 +426,48 @@ sequenceDiagram
     actor Client
     actor Dev
     actor Admin
-    
-    Client->>API: POST /auth/sign-up (Role: CLIENT)
-    Dev->>API: POST /auth/sign-up (Role: DEVELOPER)
-    Client->>API: POST /users/:id/client-profile
-    Dev->>API: POST /users/:id/developer-profile
-    Admin->>API: POST /admin/approve-account (Approves Dev)
-    
+    participant Supabase as Supabase Auth
+    participant API as PataDev Ke Backend
+
+    Note over Client,Dev: 1. Onboarding & Registration
+    Client->>Supabase: signUp / signInWithOAuth(google)
+    Supabase-->>Client: Returns JWT Token
+    Client->>API: POST /auth/complete-registration (role: CLIENT)
+    Client->>API: POST /users/me/client-profile (businessName, etc.)
+
+    Dev->>Supabase: signUp / signInWithOAuth(google)
+    Supabase-->>Dev: Returns JWT Token
+    Dev->>API: POST /auth/complete-registration (role: DEVELOPER)
+    Dev->>API: POST /users/me/developer-profile (techStack, bio)
+
+    Admin->>API: POST /admin/verify-developer (Approves Developer Profile)
+
+    Note over Client,Dev: 2. Project Posting & Bidding
     Client->>API: POST /projects (Creates DRAFT Project)
-    Client->>API: POST /projects/:id/publish (Project is now OPEN)
-    
+    Client->>API: POST /projects/:id/publish (Transitions to OPEN)
+
     Dev->>API: GET /projects (Browses open projects)
-    Dev->>API: POST /bids (Places a Bid on the Project)
-    
+    Dev->>API: POST /bids (Submits proposal with proposedAmount)
+
     Client->>API: GET /bids/project/:projectId (Reviews bids)
-    Client->>API: POST /bids/:bidId/accept (Project status -> MATCHED, other bids -> REJECTED)
-    
-    Note over Client,Dev: Chat opens!
-    Dev->>API: POST /messages (Exchanges messages with Client)
-    
-    Client->>API: POST /milestones (Defines project milestones)
-    Client->>API: POST /payments/initiate (Client funds escrow for milestone)
-    
+    Client->>API: POST /bids/:id/accept (Status -> MATCHED; Emits bid.accepted)
+    API-->>Dev: In-App Notification: "Your bid was accepted."
+
+    Note over Client,Dev: 3. Collaboration & Milestones
+    Client->>API: Connect WebSocket ws://host (Join Room bidId)
+    Dev->>API: Connect WebSocket ws://host (Join Room bidId)
+    Client->>API: WS sendMessage (Realtime chat)
+
+    Client->>API: POST /milestones (Creates project deliverables)
+    Client->>API: POST /payments/initiate (Funds escrow for milestone)
+
     Dev->>API: PATCH /milestones/:id/status (IN_PROGRESS -> SUBMITTED)
-    Client->>API: PATCH /milestones/:id/status (Approves milestone: -> APPROVED)
-    
-    Admin->>API: POST /payments/confirm-payout (Releases funds from escrow to Dev)
+    API-->>Client: In-App Notification: "A milestone was submitted for review."
+
+    Client->>API: PATCH /milestones/:id/status (SUBMITTED -> APPROVED)
+    API-->>Dev: In-App Notification: "Your milestone was approved."
+
+    Note over Admin: 4. Escrow Disbursal
+    Admin->>API: POST /payments/confirm-payout (Processes ledger payout & commission)
+    API-->>Dev: In-App Notification: "Payout was processed."
 ```
