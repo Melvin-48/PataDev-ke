@@ -1,6 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ClientProfile, DeveloperProfile, User, UserRole } from '@prisma/client';
-import { RedisService } from '../../redis/service/redis.service';
 import { UsersRepository } from '../repository/users.repository';
 import { CreateClientProfileDto } from '../dto/create-client-profile.dto';
 import { CreateDeveloperProfileDto } from '../dto/create-developer-profile.dto';
@@ -13,14 +12,10 @@ type UserWithProfiles = User & {
   developerProfile: DeveloperProfile | null;
 };
 
-const CACHE_TTL_SECONDS = 60;
-const cacheKey = (supabaseId: string) => `user:${supabaseId}`;
-
 @Injectable()
 export class UsersService {
   constructor(
     private readonly usersRepository: UsersRepository,
-    private readonly redis: RedisService,
   ) {}
 
   async syncFromSupabase(dto: SyncUserDto) {
@@ -29,30 +24,18 @@ export class UsersService {
 
     const existingByEmail = await this.usersRepository.findByEmail(dto.email);
     if (existingByEmail) {
-      const updated = await this.usersRepository.updateSupabaseId(existingByEmail.id, dto.supabaseId);
-      await this.redis.setJson(cacheKey(dto.supabaseId), updated, CACHE_TTL_SECONDS);
-      return updated;
+      return this.usersRepository.updateSupabaseId(existingByEmail.id, dto.supabaseId);
     }
 
-    const user = await this.usersRepository.create({
+    return this.usersRepository.create({
       supabaseId: dto.supabaseId,
       email: dto.email,
       role: dto.role,
     });
-
-    await this.redis.setJson(cacheKey(dto.supabaseId), user, CACHE_TTL_SECONDS);
-    return user;
   }
 
   async findBySupabaseId(supabaseId: string): Promise<UserWithProfiles | null> {
-    const cached = await this.redis.getJson<UserWithProfiles>(cacheKey(supabaseId));
-    if (cached) return cached;
-
-    const user = await this.usersRepository.findBySupabaseId(supabaseId);
-    if (user) {
-      await this.redis.setJson(cacheKey(supabaseId), user, CACHE_TTL_SECONDS);
-    }
-    return user;
+    return this.usersRepository.findBySupabaseId(supabaseId);
   }
 
   async getById(id: string) {
@@ -70,9 +53,7 @@ export class UsersService {
       throw new ConflictException('Client profile already exists');
     }
 
-    const profile = await this.usersRepository.createClientProfile(userId, dto);
-    await this.redis.invalidate(cacheKey(user.supabaseId));
-    return profile;
+    return this.usersRepository.createClientProfile(userId, dto);
   }
 
   async createDeveloperProfile(userId: string, dto: CreateDeveloperProfileDto) {
@@ -84,9 +65,7 @@ export class UsersService {
       throw new ConflictException('Developer profile already exists');
     }
 
-    const profile = await this.usersRepository.createDeveloperProfile(userId, dto);
-    await this.redis.invalidate(cacheKey(user.supabaseId));
-    return profile;
+    return this.usersRepository.createDeveloperProfile(userId, dto);
   }
 
   async updateClientProfile(userId: string, dto: UpdateClientProfileDto) {
@@ -98,9 +77,7 @@ export class UsersService {
       throw new NotFoundException('Client profile not found. Create a profile first.');
     }
 
-    const profile = await this.usersRepository.updateClientProfile(userId, dto);
-    await this.redis.invalidate(cacheKey(user.supabaseId));
-    return profile;
+    return this.usersRepository.updateClientProfile(userId, dto);
   }
 
   async updateDeveloperProfile(userId: string, dto: UpdateDeveloperProfileDto) {
@@ -112,9 +89,6 @@ export class UsersService {
       throw new NotFoundException('Developer profile not found. Create a profile first.');
     }
 
-    const profile = await this.usersRepository.updateDeveloperProfile(userId, dto);
-    await this.redis.invalidate(cacheKey(user.supabaseId));
-    return profile;
+    return this.usersRepository.updateDeveloperProfile(userId, dto);
   }
 }
-

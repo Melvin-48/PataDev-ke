@@ -2,7 +2,6 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { UsersService } from './users.service';
 import { UsersRepository } from '../repository/users.repository';
-import { RedisService } from '../../redis/service/redis.service';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -10,8 +9,6 @@ import { RedisService } from '../../redis/service/redis.service';
 
 const SUPABASE_ID = 'supa-uuid-001';
 const USER_ID = 'db-uuid-001';
-const CACHE_KEY = `user:${SUPABASE_ID}`;
-const CACHE_TTL = 60;
 
 const baseUser = {
   id: USER_ID,
@@ -64,18 +61,12 @@ const mockRepo = {
   updateDeveloperProfile: jest.fn(),
 } as unknown as UsersRepository;
 
-const mockRedis = {
-  getJson: jest.fn(),
-  setJson: jest.fn(),
-  invalidate: jest.fn(),
-} as unknown as RedisService;
-
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
 function buildService(): UsersService {
-  return new UsersService(mockRepo, mockRedis);
+  return new UsersService(mockRepo);
 }
 
 // ---------------------------------------------------------------------------
@@ -85,11 +76,6 @@ function buildService(): UsersService {
 describe('UsersService', () => {
   beforeEach(() => {
     jest.resetAllMocks();
-
-    // Default: Redis behaves as empty cache — fail-safe contract
-    (mockRedis.getJson as jest.Mock).mockResolvedValue(null);
-    (mockRedis.setJson as jest.Mock).mockResolvedValue(undefined);
-    (mockRedis.invalidate as jest.Mock).mockResolvedValue(undefined);
   });
 
   // =========================================================================
@@ -113,6 +99,7 @@ describe('UsersService', () => {
 
     it('creates a new user when none exists', async () => {
       (mockRepo.findBySupabaseId as jest.Mock).mockResolvedValue(null);
+      (mockRepo.findByEmail as jest.Mock).mockResolvedValue(null);
       (mockRepo.create as jest.Mock).mockResolvedValue(baseUser);
 
       const service = buildService();
@@ -150,53 +137,14 @@ describe('UsersService', () => {
       expect(mockRepo.create).not.toHaveBeenCalled();
       expect(result.supabaseId).toBe('new-supabase-id');
     });
-
-    it('populates the Redis cache after creating a new user with the correct key and TTL', async () => {
-      (mockRepo.findBySupabaseId as jest.Mock).mockResolvedValue(null);
-      (mockRepo.create as jest.Mock).mockResolvedValue(baseUser);
-
-      const service = buildService();
-      await service.syncFromSupabase({
-        supabaseId: SUPABASE_ID,
-        email: baseUser.email,
-        role: UserRole.CLIENT,
-      });
-
-      expect(mockRedis.setJson).toHaveBeenCalledWith(CACHE_KEY, baseUser, CACHE_TTL);
-    });
-
-    it('does not populate the Redis cache when the user already existed', async () => {
-      (mockRepo.findBySupabaseId as jest.Mock).mockResolvedValue(baseUser);
-
-      const service = buildService();
-      await service.syncFromSupabase({
-        supabaseId: SUPABASE_ID,
-        email: baseUser.email,
-        role: UserRole.CLIENT,
-      });
-
-      expect(mockRedis.setJson).not.toHaveBeenCalled();
-    });
   });
 
   // =========================================================================
-  // findBySupabaseId — cache-aside behavior
+  // findBySupabaseId
   // =========================================================================
 
   describe('findBySupabaseId', () => {
-    it('returns the cached user without hitting the repository on a cache hit', async () => {
-      const cachedUser = { ...baseUser };
-      (mockRedis.getJson as jest.Mock).mockResolvedValue(cachedUser);
-
-      const service = buildService();
-      const result = await service.findBySupabaseId(SUPABASE_ID);
-
-      expect(result).toBe(cachedUser);
-      expect(mockRepo.findBySupabaseId).not.toHaveBeenCalled();
-    });
-
-    it('queries the repository and returns the user on a cache miss', async () => {
-      (mockRedis.getJson as jest.Mock).mockResolvedValue(null);
+    it('queries the repository and returns the user', async () => {
       (mockRepo.findBySupabaseId as jest.Mock).mockResolvedValue(baseUser);
 
       const service = buildService();
@@ -206,37 +154,13 @@ describe('UsersService', () => {
       expect(result).toBe(baseUser);
     });
 
-    it('repopulates the cache after a cache miss using the correct key and TTL', async () => {
-      (mockRedis.getJson as jest.Mock).mockResolvedValue(null);
-      (mockRepo.findBySupabaseId as jest.Mock).mockResolvedValue(baseUser);
-
-      const service = buildService();
-      await service.findBySupabaseId(SUPABASE_ID);
-
-      expect(mockRedis.setJson).toHaveBeenCalledWith(CACHE_KEY, baseUser, CACHE_TTL);
-    });
-
-    it('does not repopulate the cache when the repository returns null', async () => {
-      (mockRedis.getJson as jest.Mock).mockResolvedValue(null);
+    it('returns null when user does not exist', async () => {
       (mockRepo.findBySupabaseId as jest.Mock).mockResolvedValue(null);
 
       const service = buildService();
-      await service.findBySupabaseId(SUPABASE_ID);
-
-      expect(mockRedis.setJson).not.toHaveBeenCalled();
-    });
-
-    it('falls back to the repository when Redis is unavailable (getJson returns null)', async () => {
-      // RedisService.getJson() is fail-safe and returns null on Redis error.
-      // UsersService must treat null as a cache miss and continue to the DB.
-      (mockRedis.getJson as jest.Mock).mockResolvedValue(null);
-      (mockRepo.findBySupabaseId as jest.Mock).mockResolvedValue(baseUser);
-
-      const service = buildService();
       const result = await service.findBySupabaseId(SUPABASE_ID);
 
-      expect(mockRepo.findBySupabaseId).toHaveBeenCalledWith(SUPABASE_ID);
-      expect(result).toBe(baseUser);
+      expect(result).toBeNull();
     });
   });
 
@@ -260,7 +184,7 @@ describe('UsersService', () => {
       ).rejects.toThrow('User is not a CLIENT');
     });
 
-    it('does not call createClientProfile or invalidate cache when role check fails', async () => {
+    it('does not call createClientProfile when role check fails', async () => {
       const developerUser = { ...baseUser, role: UserRole.DEVELOPER };
       (mockRepo.findById as jest.Mock).mockResolvedValue(developerUser);
 
@@ -269,7 +193,6 @@ describe('UsersService', () => {
       await service.createClientProfile(USER_ID, clientProfileDto).catch(() => {});
 
       expect(mockRepo.createClientProfile).not.toHaveBeenCalled();
-      expect(mockRedis.invalidate).not.toHaveBeenCalled();
     });
 
     it('throws ConflictException when a CLIENT already has a profile (duplicate protection)', async () => {
@@ -291,7 +214,7 @@ describe('UsersService', () => {
       ).rejects.toThrow('Client profile already exists');
     });
 
-    it('does not call createClientProfile or invalidate cache when profile already exists', async () => {
+    it('does not call createClientProfile when profile already exists', async () => {
       const userWithProfile = {
         ...baseUser,
         role: UserRole.CLIENT,
@@ -304,10 +227,9 @@ describe('UsersService', () => {
       await service.createClientProfile(USER_ID, clientProfileDto).catch(() => {});
 
       expect(mockRepo.createClientProfile).not.toHaveBeenCalled();
-      expect(mockRedis.invalidate).not.toHaveBeenCalled();
     });
 
-    it('creates the profile and invalidates the user cache on the happy path', async () => {
+    it('creates the profile on the happy path', async () => {
       const clientUser = { ...baseUser, role: UserRole.CLIENT, clientProfile: null };
       (mockRepo.findById as jest.Mock).mockResolvedValue(clientUser);
       (mockRepo.createClientProfile as jest.Mock).mockResolvedValue(createdProfile);
@@ -317,17 +239,6 @@ describe('UsersService', () => {
 
       expect(mockRepo.createClientProfile).toHaveBeenCalledWith(USER_ID, clientProfileDto);
       expect(result).toBe(createdProfile);
-    });
-
-    it('invalidates the cache with the correct key after successful profile creation', async () => {
-      const clientUser = { ...baseUser, role: UserRole.CLIENT, clientProfile: null };
-      (mockRepo.findById as jest.Mock).mockResolvedValue(clientUser);
-      (mockRepo.createClientProfile as jest.Mock).mockResolvedValue(createdProfile);
-
-      const service = buildService();
-      await service.createClientProfile(USER_ID, clientProfileDto);
-
-      expect(mockRedis.invalidate).toHaveBeenCalledWith(CACHE_KEY);
     });
 
     it('throws NotFoundException when user does not exist', async () => {
@@ -361,7 +272,7 @@ describe('UsersService', () => {
       ).rejects.toThrow('User is not a DEVELOPER');
     });
 
-    it('does not call createDeveloperProfile or invalidate cache when role check fails', async () => {
+    it('does not call createDeveloperProfile when role check fails', async () => {
       const clientUser = { ...baseUser, role: UserRole.CLIENT };
       (mockRepo.findById as jest.Mock).mockResolvedValue(clientUser);
 
@@ -369,7 +280,6 @@ describe('UsersService', () => {
       await service.createDeveloperProfile(USER_ID, developerProfileDto).catch(() => {});
 
       expect(mockRepo.createDeveloperProfile).not.toHaveBeenCalled();
-      expect(mockRedis.invalidate).not.toHaveBeenCalled();
     });
 
     it('throws ConflictException when a DEVELOPER already has a profile (duplicate protection)', async () => {
@@ -391,22 +301,7 @@ describe('UsersService', () => {
       ).rejects.toThrow('Developer profile already exists');
     });
 
-    it('does not call createDeveloperProfile or invalidate cache when profile already exists', async () => {
-      const devWithProfile = {
-        ...baseUser,
-        role: UserRole.DEVELOPER,
-        developerProfile: { id: 'existing-dev-profile', userId: USER_ID, displayName: 'Old' },
-      };
-      (mockRepo.findById as jest.Mock).mockResolvedValue(devWithProfile);
-
-      const service = buildService();
-      await service.createDeveloperProfile(USER_ID, developerProfileDto).catch(() => {});
-
-      expect(mockRepo.createDeveloperProfile).not.toHaveBeenCalled();
-      expect(mockRedis.invalidate).not.toHaveBeenCalled();
-    });
-
-    it('creates the developer profile and invalidates cache on the happy path', async () => {
+    it('creates the developer profile on the happy path', async () => {
       const devUser = { ...baseUser, role: UserRole.DEVELOPER, developerProfile: null };
       (mockRepo.findById as jest.Mock).mockResolvedValue(devUser);
       (mockRepo.createDeveloperProfile as jest.Mock).mockResolvedValue(createdDeveloperProfile);
@@ -415,7 +310,6 @@ describe('UsersService', () => {
       const result = await service.createDeveloperProfile(USER_ID, developerProfileDto);
 
       expect(mockRepo.createDeveloperProfile).toHaveBeenCalledWith(USER_ID, developerProfileDto);
-      expect(mockRedis.invalidate).toHaveBeenCalledWith(CACHE_KEY);
       expect(result).toBe(createdDeveloperProfile);
     });
   });
@@ -440,7 +334,7 @@ describe('UsersService', () => {
       ).rejects.toThrow('Client profile not found. Create a profile first.');
     });
 
-    it('does not call updateClientProfile or invalidate cache when profile does not exist', async () => {
+    it('does not call updateClientProfile when profile does not exist', async () => {
       const clientUserNoProfile = { ...baseUser, role: UserRole.CLIENT, clientProfile: null };
       (mockRepo.findById as jest.Mock).mockResolvedValue(clientUserNoProfile);
 
@@ -448,10 +342,9 @@ describe('UsersService', () => {
       await service.updateClientProfile(USER_ID, { businessName: 'New Name' }).catch(() => {});
 
       expect(mockRepo.updateClientProfile).not.toHaveBeenCalled();
-      expect(mockRedis.invalidate).not.toHaveBeenCalled();
     });
 
-    it('updates the client profile and invalidates cache on the happy path', async () => {
+    it('updates the client profile on the happy path', async () => {
       const userWithProfile = {
         ...baseUser,
         role: UserRole.CLIENT,
@@ -465,7 +358,6 @@ describe('UsersService', () => {
       const result = await service.updateClientProfile(USER_ID, { businessName: 'New Co' });
 
       expect(mockRepo.updateClientProfile).toHaveBeenCalledWith(USER_ID, { businessName: 'New Co' });
-      expect(mockRedis.invalidate).toHaveBeenCalledWith(CACHE_KEY);
       expect(result).toBe(updatedProfile);
     });
   });
@@ -490,7 +382,7 @@ describe('UsersService', () => {
       ).rejects.toThrow('Developer profile not found. Create a profile first.');
     });
 
-    it('does not call updateDeveloperProfile or invalidate cache when profile does not exist', async () => {
+    it('does not call updateDeveloperProfile when profile does not exist', async () => {
       const devUserNoProfile = { ...baseUser, role: UserRole.DEVELOPER, developerProfile: null };
       (mockRepo.findById as jest.Mock).mockResolvedValue(devUserNoProfile);
 
@@ -498,10 +390,9 @@ describe('UsersService', () => {
       await service.updateDeveloperProfile(USER_ID, { displayName: 'New Name' }).catch(() => {});
 
       expect(mockRepo.updateDeveloperProfile).not.toHaveBeenCalled();
-      expect(mockRedis.invalidate).not.toHaveBeenCalled();
     });
 
-    it('updates the developer profile and invalidates cache on the happy path', async () => {
+    it('updates the developer profile on the happy path', async () => {
       const devWithProfile = {
         ...baseUser,
         role: UserRole.DEVELOPER,
@@ -515,9 +406,7 @@ describe('UsersService', () => {
       const result = await service.updateDeveloperProfile(USER_ID, { displayName: 'New Name' });
 
       expect(mockRepo.updateDeveloperProfile).toHaveBeenCalledWith(USER_ID, { displayName: 'New Name' });
-      expect(mockRedis.invalidate).toHaveBeenCalledWith(CACHE_KEY);
       expect(result).toBe(updatedProfile);
     });
   });
 });
-

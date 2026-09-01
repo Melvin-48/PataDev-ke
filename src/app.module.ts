@@ -12,7 +12,7 @@ import { MessagesModule } from './modules/messages/messages.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
-import { RedisModule } from './modules/redis/redis.module';
+
 
 @Module({
   imports: [
@@ -28,7 +28,7 @@ import { RedisModule } from './modules/redis/redis.module';
     PaymentsModule,
     AdminModule,
     NotificationsModule,
-    RedisModule,
+
   ],
   controllers: [HealthController],
 })
