@@ -142,6 +142,15 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
     // Broadcast the message to everyone in the room (including the sender)
     this.server.to(bidId).emit('message', savedMessage);
     this.logger.log(`Message broadcasted in room ${bidId} by ${user.email}`);
+
+    // If the counterpart is the shared demo actor, reply on its behalf with a
+    // slight delay so the room feels like a real conversation.
+    const autoReply = await this.messagesService.autoReply(user.id, bidId);
+    if (autoReply) {
+      setTimeout(() => {
+        this.server.to(bidId).emit('message', autoReply);
+      }, 1400);
+    }
   }
 
   private extractToken(client: Socket): string | null {

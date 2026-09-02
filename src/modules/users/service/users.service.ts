@@ -1,6 +1,7 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ClientProfile, DeveloperProfile, User, UserRole } from '@prisma/client';
 import { UsersRepository } from '../repository/users.repository';
+import { DemoEngagementService } from '../../demo/demo-engagement.service';
 import { CreateClientProfileDto } from '../dto/create-client-profile.dto';
 import { CreateDeveloperProfileDto } from '../dto/create-developer-profile.dto';
 import { UpdateClientProfileDto } from '../dto/update-client-profile.dto';
@@ -16,6 +17,7 @@ type UserWithProfiles = User & {
 export class UsersService {
   constructor(
     private readonly usersRepository: UsersRepository,
+    private readonly demoEngagementService: DemoEngagementService,
   ) {}
 
   async syncFromSupabase(dto: SyncUserDto) {
@@ -27,11 +29,17 @@ export class UsersService {
       return this.usersRepository.updateSupabaseId(existingByEmail.id, dto.supabaseId);
     }
 
-    return this.usersRepository.create({
+    const user = await this.usersRepository.create({
       supabaseId: dto.supabaseId,
       email: dto.email,
       role: dto.role,
     });
+
+    // A brand-new user gets one working demo chat room against a demo
+    // counterpart right away, so messaging is usable from the first sign-up.
+    await this.demoEngagementService.ensureForUser(user.id, user.role);
+
+    return user;
   }
 
   async findBySupabaseId(supabaseId: string): Promise<UserWithProfiles | null> {
@@ -53,7 +61,14 @@ export class UsersService {
       throw new ConflictException('Client profile already exists');
     }
 
-    return this.usersRepository.createClientProfile(userId, dto);
+    const profile = await this.usersRepository.createClientProfile(userId, dto);
+
+    // Role is now committed to CLIENT on the backend - make sure the user has
+    // a demo engagement (covers users who picked their role during onboarding
+    // rather than at registration).
+    await this.demoEngagementService.ensureForUser(userId, user.role);
+
+    return profile;
   }
 
   async createDeveloperProfile(userId: string, dto: CreateDeveloperProfileDto) {
@@ -65,7 +80,14 @@ export class UsersService {
       throw new ConflictException('Developer profile already exists');
     }
 
-    return this.usersRepository.createDeveloperProfile(userId, dto);
+    const profile = await this.usersRepository.createDeveloperProfile(userId, dto);
+
+    // Role is now committed to DEVELOPER on the backend - make sure the user
+    // has a demo engagement (covers developers who picked their role during
+    // onboarding rather than at registration).
+    await this.demoEngagementService.ensureForUser(userId, user.role);
+
+    return profile;
   }
 
   async updateClientProfile(userId: string, dto: UpdateClientProfileDto) {

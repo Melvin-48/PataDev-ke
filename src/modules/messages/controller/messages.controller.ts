@@ -8,17 +8,30 @@ import { SendMessageDto } from '../dto/send-message.dto';
 
 @ApiTags('messages')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, BidAcceptedGuard)
+@UseGuards(JwtAuthGuard)
 @Controller('messages')
 export class MessagesController {
   constructor(private readonly messagesService: MessagesService) {}
 
+  // Chat list for either role - every ACCEPTED engagement the current user is
+  // part of (as the client or as the winning developer), with the counterpart
+  // name and latest message for previews. Not gated by BidAcceptedGuard since
+  // there is no single bid being acted on here.
+  @Get('conversations')
+  conversations(@CurrentUser() user) {
+    return this.messagesService.conversations(user.id);
+  }
+
   @Post()
-  send(@CurrentUser() user, @Body() dto: SendMessageDto) {
-    return this.messagesService.send(user.id, dto.bidId, dto.content);
+  @UseGuards(BidAcceptedGuard)
+  async send(@CurrentUser() user, @Body() dto: SendMessageDto) {
+    const saved = await this.messagesService.send(user.id, dto.bidId, dto.content);
+    await this.messagesService.autoReply(user.id, dto.bidId);
+    return saved;
   }
 
   @Get('bid/:bidId')
+  @UseGuards(BidAcceptedGuard)
   history(@Param('bidId') bidId: string) {
     return this.messagesService.history(bidId);
   }
